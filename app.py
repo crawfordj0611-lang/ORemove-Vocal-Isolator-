@@ -49,7 +49,25 @@ except ImportError:  # Friendly message instead of a bare traceback.
 # --------------------------------------------------------------------------- #
 
 APP_TITLE = "YT Stem Extractor & UVR Studio"
-APP_DIR = Path(__file__).resolve().parent
+
+# True when running as the packaged Windows .exe (built with PyInstaller).
+FROZEN = getattr(sys, "frozen", False)
+
+# The packaged app keeps output/ and models/ next to the .exe; from source,
+# next to this script.
+APP_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent
+
+if FROZEN:
+    # A windowed .exe has no console, so sys.stdout/stderr are None and any
+    # library that prints (tqdm progress bars, logging) would crash.
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w")
+    # The build ships ffmpeg.exe/ffprobe.exe next to the app; put them on PATH
+    # so yt-dlp, pydub and audio-separator all find them.
+    bundle_dirs = [APP_DIR, Path(getattr(sys, "_MEIPASS", APP_DIR))]
+    os.environ["PATH"] = os.pathsep.join(str(d) for d in bundle_dirs) + os.pathsep + os.environ.get("PATH", "")
 DEFAULT_OUTPUT_DIR = APP_DIR / "output"
 # UVR models are downloaded here on first use and reused after that.
 MODEL_DIR = APP_DIR / "models"
@@ -650,7 +668,47 @@ class StemExtractorApp(ctk.CTk):
         self.log_box.configure(state="disabled")
 
 
+def self_test(report_path: Path) -> int:
+    """
+    Headless check used by the Windows build: FFmpeg is found, and a short
+    generated test tone goes through the default UVR model and comes out as
+    two stems. Writes a report to `report_path`; returns the exit code.
+    """
+    lines = []
+    log = lines.append
+    try:
+        if not ffmpeg_available():
+            raise PipelineError("FFmpeg not found")
+        log(f"ffmpeg: {shutil.which('ffmpeg')}")
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            tmp = Path(tmp)
+            tone = tmp / "tone.wav"
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                            "sine=frequency=440:duration=8", "-ac", "2", "-ar", "44100", str(tone)],
+                           check=True)
+            stems_dir = tmp / "stems"
+            stems_dir.mkdir()
+            job = Job(url="", model_file=next(iter(UVR_MODELS.values())),
+                      output_format="WAV", output_dir=tmp / "out")
+            pipeline = ExtractionPipeline(log=log, progress=lambda _v: None)
+            saved = pipeline.file_stems(pipeline.separate(tone, job, stems_dir), "Self Test", job.output_dir)
+            for path in saved:
+                log(f"saved: {path.relative_to(job.output_dir)}")
+            if len(saved) != 2:
+                raise PipelineError(f"expected 2 stems, got {len(saved)}")
+        log("SELF-TEST PASSED")
+        code = 0
+    except Exception as exc:
+        log(traceback.format_exc())
+        log(f"SELF-TEST FAILED: {exc}")
+        code = 1
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    return code
+
+
 def main():
+    if len(sys.argv) >= 3 and sys.argv[1] == "--self-test":
+        sys.exit(self_test(Path(sys.argv[2])))
     app = StemExtractorApp()
     app.mainloop()
 
