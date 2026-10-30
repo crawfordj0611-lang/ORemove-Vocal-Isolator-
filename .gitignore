@@ -1,0 +1,9 @@
+# Generated stems and cached UVR models
+output/
+models/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
