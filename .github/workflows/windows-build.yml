@@ -50,6 +50,7 @@ jobs:
       - name: Self-test from source
         shell: pwsh
         run: |
+          $env:PATH = "$PWD\ffmpeg-bin;$env:PATH"
           python app.py --self-test source-test.txt
           $code = $LASTEXITCODE
           Get-Content source-test.txt
