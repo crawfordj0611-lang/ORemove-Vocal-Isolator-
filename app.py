@@ -379,7 +379,12 @@ class ExtractionPipeline:
                 suffix = stem_label.group(1) if stem_label else "Stem"
                 target = output_dir / f"{base_name} ({suffix}){stem.suffix}"
             target = unique_path(target)
-            shutil.move(str(stem), target)
+            # Copy, don't move: the temp folder is private to the current user
+            # (Python restricts it on Windows), and a moved file keeps that
+            # restrictive permission, so apps like Windows Media Player get
+            # "permission denied". A copy inherits the output folder's normal
+            # permissions. The temp folder is deleted afterwards anyway.
+            shutil.copyfile(stem, target)
             saved.append(target)
         return saved
 
