@@ -6,7 +6,7 @@
 
 <p align="center">
   <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4">
-  <img alt="NVIDIA GPU" src="https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900">
+  <img alt="GPU: NVIDIA only" src="https://img.shields.io/badge/GPU-NVIDIA%20only-76B900">
   <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB">
   <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-22C55E">
 </p>
@@ -15,6 +15,10 @@
   <img src="docs/screenshot.png" alt="Money Extractor" width="640">
 </p>
 
+> [!IMPORTANT]
+> **GPU acceleration works with NVIDIA graphics cards only.** AMD Radeon and Intel graphics are **not supported** for GPU acceleration.
+> If your PC doesn't have an NVIDIA card, use the **CPU edition**. It runs on any Windows PC, just more slowly.
+
 ---
 
 ## Features
@@ -22,7 +26,7 @@
 - **YouTube or your own files.** Paste a YouTube link, or browse for MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, WMA or AIFF files. Video files work too; only their audio is used.
 - **Batch processing.** Select several files at once. They're separated one after another with the model loaded once, and a file that can't be read is skipped without stopping the rest.
 - **Top-rated separation models.** BS-Roformer models that lead the benchmark published with [audio-separator](https://github.com/nomadkaraoke/python-audio-separator), plus a fast MDX-Net option.
-- **NVIDIA GPU acceleration.** The GPU edition runs the BS-Roformer models with CUDA, turning minutes into seconds. A CPU edition runs on any PC.
+- **NVIDIA GPU acceleration.** The NVIDIA GPU edition runs the BS-Roformer models with CUDA, turning minutes into seconds. **NVIDIA cards only**; for AMD, Intel or no graphics card, the CPU edition runs on any PC.
 - **Lossless quality.** Audio is decoded straight to uncompressed WAV before separation (24-bit for your own files). Export to WAV, or MP3 at 320 kbps.
 - **Organised output.** Stems land in `acapellas/` and `instrumentals/`, named after the video or file. Existing files are never overwritten.
 - **Play straight away.** Each finished song gets one-click **▶ Acapella** and **▶ Instrumental** buttons, and **Show** opens it in Explorer.
@@ -35,12 +39,14 @@
 
 Get the latest version from the **[Releases](https://github.com/crawfordj0611-lang/Money-Extractor-YT2MP3-Tool/releases/latest)** page.
 
-| Edition | For | Download |
+| Edition | Works on | Download |
 |---|---|---|
-| **GPU** (recommended) | PCs with an NVIDIA graphics card | All `Money-Extractor-GPU-Setup` files: the `.exe` and every `.bin` part |
-| **CPU** | Any 64-bit Windows PC | `Money-Extractor-Windows-CPU.zip` |
+| **NVIDIA GPU edition** (fastest) | **Only** PCs with an **NVIDIA** GeForce graphics card (GTX 900 series or newer) | All `Money-Extractor-NVIDIA-GPU-Setup` files: the `.exe` and every `.bin` part |
+| **CPU edition** | **Any** 64-bit Windows PC, including PCs with **AMD** or **Intel** graphics | `Money-Extractor-Windows-CPU.zip` |
 
-**GPU edition:** save the `.exe` and all `.bin` parts into the same folder, then run `Money-Extractor-GPU-Setup.exe`. The installer is split into parts because GitHub limits each file to 2 GB. It installs for your user only (no admin rights needed), adds a Start Menu shortcut, and can be removed from **Settings → Apps**. Installing a new version upgrades the old one and keeps your downloaded models and settings.
+**Not sure which graphics card you have?** Open **Task Manager → Performance** and look at the **GPU** entries. If none of them says **NVIDIA**, download the CPU edition.
+
+**NVIDIA GPU edition:** save the `.exe` and all `.bin` parts into the same folder, then run `Money-Extractor-NVIDIA-GPU-Setup.exe`. If it can't find an NVIDIA graphics card, the installer warns you before installing anything. The installer is split into parts because GitHub limits each file to 2 GB. It installs for your user only (no admin rights needed), adds a Start Menu shortcut, and can be removed from **Settings → Apps**. Installing a new version upgrades the old one and keeps your downloaded models and settings.
 
 **CPU edition:** extract the zip and run `Money Extractor.exe` inside the folder. Nothing is installed.
 
@@ -78,10 +84,10 @@ The default folder is `Music\Money Extractor`. Click **Change** to pick another;
 
 ## System requirements
 
-| | GPU edition | CPU edition |
+| | NVIDIA GPU edition | CPU edition |
 |---|---|---|
 | **OS** | Windows 10 or 11, 64-bit | Windows 10 or 11, 64-bit |
-| **Graphics** | NVIDIA GTX 900 series or newer, 4 GB+ VRAM (8 GB+ recommended for BS-Roformer), current driver | Not used |
+| **Graphics** | **NVIDIA only:** GeForce GTX 900 series or newer, 4 GB+ VRAM (8 GB+ recommended for BS-Roformer), current driver. **AMD and Intel GPUs are not supported.** | Any, or none (not used) |
 | **Processor** | Any modern 4+ core CPU | 6–8 cores recommended, 4 minimum |
 | **Memory** | 16 GB recommended | 8 GB minimum, 16 GB recommended |
 | **Disk** | ~6 GB, plus ~1.5 GB for the BS-Roformer models | ~2 GB, plus ~1.5 GB for the BS-Roformer models |
@@ -91,7 +97,7 @@ The default folder is `Music\Money Extractor`. Click **Change** to pick another;
 
 | | BS-Roformer | MDX-Net Inst HQ 3 |
 |---|---|---|
-| **GPU edition** (RTX card) | Seconds to about a minute | About a minute (runs on the CPU) |
+| **NVIDIA GPU edition** (RTX card) | Seconds to about a minute | About a minute (runs on the CPU) |
 | **CPU edition** | 15–30+ minutes | 2–6 minutes |
 
 WAV stems take about 10 MB per minute of audio; MP3 at 320 kbps takes about 2.4 MB per minute.
@@ -100,7 +106,9 @@ WAV stems take about 10 MB per minute of audio; MP3 at 320 kbps takes about 2.4 
 
 | Problem | Fix |
 |---|---|
-| Device badge says **CPU only** on the GPU edition | Update your NVIDIA driver, then restart the app. **Show details** shows the reason. |
+| I have an **AMD** or **Intel** graphics card | GPU acceleration is NVIDIA-only. Use the **CPU edition**. |
+| The NVIDIA GPU edition shows **No NVIDIA GPU** | Either the PC has no NVIDIA card (use the CPU edition), or the NVIDIA driver is out of date (update it from nvidia.com, then restart the app). |
+| The installer says no NVIDIA graphics card was found | Your PC has no NVIDIA card that Windows can see. Use the CPU edition. |
 | YouTube downloads fail for videos that play fine | YouTube changes often. Install the latest release, which includes an updated downloader. |
 | "Age-restricted" or "private" video | These can't be downloaded without signing in, so they're refused. |
 | A file in a batch was skipped | **Show details** lists each skipped file and why (e.g. not a readable audio file). |
@@ -120,7 +128,7 @@ python -m venv .venv
 
 Activate it (Windows: `.venv\Scripts\activate`; macOS/Linux: `source .venv/bin/activate`).
 
-**3. NVIDIA GPU only:** install the CUDA build of PyTorch first.
+**3. NVIDIA GPUs only:** install the CUDA build of PyTorch first. Skip this step for AMD, Intel or no GPU.
 
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
@@ -136,12 +144,12 @@ pip install -r requirements.txt
 python app.py
 ```
 
-From source, stems are saved to `output/` and models to `models/` next to `app.py`. Apple Silicon Macs use their GPU automatically. To add another model, extend `MODELS` at the top of `app.py`; `audio-separator --list_models` lists every available model.
+From source, stems are saved to `output/` and models to `models/` next to `app.py`. To add another model, extend `MODELS` at the top of `app.py`; `audio-separator --list_models` lists every available model.
 
 ## How it works
 
 1. **Get audio.** For a YouTube link, [yt-dlp](https://github.com/yt-dlp/yt-dlp) downloads the best available audio stream. For a local file, FFmpeg decodes it. Either way, the audio becomes uncompressed WAV in a private temporary folder.
-2. **Separate.** [audio-separator](https://github.com/nomadkaraoke/python-audio-separator) runs the chosen Ultimate Vocal Remover model with PyTorch or ONNX Runtime, on the GPU when available.
+2. **Separate.** [audio-separator](https://github.com/nomadkaraoke/python-audio-separator) runs the chosen Ultimate Vocal Remover model with PyTorch or ONNX Runtime, on an NVIDIA GPU when available, otherwise on the CPU.
 3. **Save.** The stems are named after the song, sorted into `acapellas/` and `instrumentals/`, and the temporary files are deleted, even if something fails.
 
 All processing happens on your computer. Nothing is uploaded.

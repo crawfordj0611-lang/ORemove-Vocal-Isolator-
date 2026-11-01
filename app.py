@@ -248,6 +248,15 @@ def detect_device() -> str:
     return "CPU"
 
 
+def is_nvidia_edition() -> bool:
+    """True for the NVIDIA GPU edition (PyTorch built with CUDA)."""
+    try:
+        import torch
+        return torch.version.cuda is not None
+    except Exception:
+        return False
+
+
 # --------------------------------------------------------------------------- #
 # Processing pipeline (runs on the worker thread)
 # --------------------------------------------------------------------------- #
@@ -1024,8 +1033,20 @@ class StemExtractorApp(ctk.CTk):
             return
         on_gpu = info != "CPU"
         self.device_dot.configure(text_color=ACCENT if on_gpu else "#F5A524")
-        self.device_label.configure(text=info if on_gpu else "CPU only", text_color=TEXT)
         self.log(f"AI engine ready on: {info}")
+        if on_gpu:
+            self.device_label.configure(text=info, text_color=TEXT)
+        elif is_nvidia_edition():
+            # GPU acceleration in this edition works only with NVIDIA cards.
+            self.device_label.configure(text="No NVIDIA GPU", text_color=TEXT)
+            message = ("No usable NVIDIA GPU found (none installed, or the driver is out of date). "
+                       "This edition only accelerates NVIDIA GPUs; running on the CPU, which is much slower.")
+            self.log(message)
+            if not (self.worker and self.worker.is_alive()):
+                self._set_status(message, "#F5A524")
+                self.status_label.configure(wraplength=640, justify="left")
+        else:
+            self.device_label.configure(text="CPU only", text_color=TEXT)
 
     def _finish(self):
         self._set_running(False)
