@@ -5,7 +5,7 @@
 ; parts under GitHub's 2 GB per-file limit: Setup.exe plus Setup-1.bin, -2.bin...
 ; Build:  set APP_VERSION=1.1.0  &&  ISCC packaging\installer.iss
 
-#define AppName "Money Extractor"
+#define AppName "ORemove"
 #define AppVersion GetEnv("APP_VERSION")
 
 [Setup]
@@ -26,7 +26,7 @@ WizardStyle=modern
 UninstallDisplayIcon={app}\{#AppName}.exe
 SourceDir=..
 OutputDir=installer-out
-OutputBaseFilename=Money-Extractor-NVIDIA-GPU-Setup
+OutputBaseFilename=ORemove-NVIDIA-GPU-Setup
 Compression=lzma2/fast
 LZMAUseSeparateProcess=yes
 LZMANumBlockThreads=4
@@ -41,7 +41,7 @@ Type: files; Name: "{autoprograms}\YT Stem Extractor.lnk"
 Type: files; Name: "{autodesktop}\YT Stem Extractor.lnk"
 
 [Messages]
-WelcomeLabel2=This will install [name/ver] on your computer.%n%nTHIS EDITION REQUIRES AN NVIDIA GRAPHICS CARD (GeForce GTX 900 series or newer, with a current driver). AMD and Intel graphics are not supported. For a PC without an NVIDIA card, use the CPU edition (Money-Extractor-Windows-CPU.zip) instead.%n%nIt is recommended that you close all other applications before continuing.
+WelcomeLabel2=This will install [name/ver] on your computer.%n%nTHIS EDITION REQUIRES AN NVIDIA GRAPHICS CARD (GeForce GTX 900 series or newer, with a current driver). AMD and Intel graphics are not supported. For a PC without an NVIDIA card, use the CPU edition (ORemove-Windows-CPU.zip) instead.%n%nIt is recommended that you close all other applications before continuing.
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"
@@ -97,10 +97,10 @@ begin
   if not HasNvidiaGpu() then
     Result := MsgBox(
       'No NVIDIA graphics card was found on this PC.' + #13#10 + #13#10 +
-      'This edition of Money Extractor only supports NVIDIA GPUs. AMD and Intel ' +
+      'This edition of ORemove only supports NVIDIA GPUs. AMD and Intel ' +
       'graphics are not supported. Without an NVIDIA card it runs on the processor, ' +
       'which is much slower, and the download is far larger than you need.' + #13#10 + #13#10 +
-      'Use the CPU edition (Money-Extractor-Windows-CPU.zip) instead.' + #13#10 + #13#10 +
+      'Use the CPU edition (ORemove-Windows-CPU.zip) instead.' + #13#10 + #13#10 +
       'Install this NVIDIA edition anyway?',
       mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
 end;

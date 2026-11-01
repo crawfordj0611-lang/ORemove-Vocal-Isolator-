@@ -31,7 +31,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 120
     env:
-      APP_NAME: Money Extractor
+      APP_NAME: ORemove
       VERSION: ${{ inputs.version || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
@@ -125,7 +125,7 @@ jobs:
       - name: Package (portable zip)
         if: matrix.flavor == 'cpu'
         shell: pwsh
-        run: 7z a -tzip -mx=5 Money-Extractor-Windows-CPU.zip "./dist/$env:APP_NAME"
+        run: 7z a -tzip -mx=5 ORemove-Windows-CPU.zip "./dist/$env:APP_NAME"
 
       - name: Package (installer)
         if: matrix.flavor == 'cuda'
@@ -146,7 +146,7 @@ jobs:
         if: matrix.flavor == 'cuda'
         shell: pwsh
         run: |
-          $setup = "installer-out/Money-Extractor-NVIDIA-GPU-Setup.exe"
+          $setup = "installer-out/ORemove-NVIDIA-GPU-Setup.exe"
           $dir = "$env:RUNNER_TEMP\mxinstall"
           $quiet = "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$dir"
           $p = Start-Process $setup -ArgumentList $quiet -Wait -PassThru
@@ -166,18 +166,18 @@ jobs:
           make_latest: true
           fail_on_unmatched_files: true
           files: |
-            ${{ matrix.flavor == 'cpu' && 'Money-Extractor-Windows-CPU.zip' || 'installer-out/*' }}
+            ${{ matrix.flavor == 'cpu' && 'ORemove-Windows-CPU.zip' || 'installer-out/*' }}
           body: |
-            Windows builds of **Money Extractor**: AI stem separation for YouTube links and your own audio files.
+            Windows builds of **ORemove - AI Powered Vocal Isolator**: AI stem separation for YouTube links and your own audio files.
 
             > **⚠️ GPU acceleration works with NVIDIA graphics cards only.** AMD and Intel GPUs are not supported. If your PC doesn't have an NVIDIA card, download the CPU edition.
 
             ### NVIDIA GPU edition: NVIDIA graphics cards only
             For PCs with an **NVIDIA** GeForce GTX 900-series or newer card and a current driver.
-            Download **all** the `Money-Extractor-NVIDIA-GPU-Setup` files (the `.exe` and every `.bin` part) into the same folder, then run `Money-Extractor-NVIDIA-GPU-Setup.exe`. Installs for your user only; no admin needed. The installer warns you if it can't find an NVIDIA card. Upgrades earlier "YT Stem Extractor" installs in place.
+            Download **all** the `ORemove-NVIDIA-GPU-Setup` files (the `.exe` and every `.bin` part) into the same folder, then run `ORemove-NVIDIA-GPU-Setup.exe`. Installs for your user only; no admin needed. The installer warns you if it can't find an NVIDIA card. Upgrades earlier "YT Stem Extractor" installs in place.
 
             ### CPU edition: any PC, including AMD and Intel graphics
-            Download `Money-Extractor-Windows-CPU.zip`, extract it, and run `Money Extractor.exe` inside. Works everywhere, but much slower.
+            Download `ORemove-Windows-CPU.zip`, extract it, and run `ORemove.exe` inside. Works everywhere, but much slower.
 
             FFmpeg and the MDX-Net model are included; the two BS-Roformer models download once on first use.
             Windows SmartScreen may warn because the app isn't code-signed: click **More info**, then **Run anyway**.

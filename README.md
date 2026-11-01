@@ -1,4 +1,5 @@
-<h1 align="center">Money Extractor</h1>
+<h1 align="center">ORemove</h1>
+<h3 align="center">AI Powered Vocal Isolator</h3>
 
 <p align="center">
   <strong>Clean acapellas and instrumentals from any YouTube link or audio file, powered by state-of-the-art UVR AI models.</strong>
@@ -12,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="Money Extractor" width="640">
+  <img src="docs/screenshot.png" alt="ORemove - AI Powered Vocal Isolator" width="640">
 </p>
 
 > [!IMPORTANT]
@@ -41,14 +42,14 @@ Get the latest version from the **[Releases](https://github.com/crawfordj0611-la
 
 | Edition | Works on | Download |
 |---|---|---|
-| **NVIDIA GPU edition** (fastest) | **Only** PCs with an **NVIDIA** GeForce graphics card (GTX 900 series or newer) | All `Money-Extractor-NVIDIA-GPU-Setup` files: the `.exe` and every `.bin` part |
-| **CPU edition** | **Any** 64-bit Windows PC, including PCs with **AMD** or **Intel** graphics | `Money-Extractor-Windows-CPU.zip` |
+| **NVIDIA GPU edition** (fastest) | **Only** PCs with an **NVIDIA** GeForce graphics card (GTX 900 series or newer) | All `ORemove-NVIDIA-GPU-Setup` files: the `.exe` and every `.bin` part |
+| **CPU edition** | **Any** 64-bit Windows PC, including PCs with **AMD** or **Intel** graphics | `ORemove-Windows-CPU.zip` |
 
 **Not sure which graphics card you have?** Open **Task Manager → Performance** and look at the **GPU** entries. If none of them says **NVIDIA**, download the CPU edition.
 
-**NVIDIA GPU edition:** save the `.exe` and all `.bin` parts into the same folder, then run `Money-Extractor-NVIDIA-GPU-Setup.exe`. If it can't find an NVIDIA graphics card, the installer warns you before installing anything. The installer is split into parts because GitHub limits each file to 2 GB. It installs for your user only (no admin rights needed), adds a Start Menu shortcut, and can be removed from **Settings → Apps**. Installing a new version upgrades the old one and keeps your downloaded models and settings.
+**NVIDIA GPU edition:** save the `.exe` and all `.bin` parts into the same folder, then run `ORemove-NVIDIA-GPU-Setup.exe`. If it can't find an NVIDIA graphics card, the installer warns you before installing anything. The installer is split into parts because GitHub limits each file to 2 GB. It installs for your user only (no admin rights needed), adds a Start Menu shortcut, and can be removed from **Settings → Apps**. Installing a new version upgrades the old one and keeps your downloaded models and settings.
 
-**CPU edition:** extract the zip and run `Money Extractor.exe` inside the folder. Nothing is installed.
+**CPU edition:** extract the zip and run `ORemove.exe` inside the folder. Nothing is installed.
 
 > Windows SmartScreen may warn that the app is unrecognised because it isn't code-signed. Click **More info**, then **Run anyway**.
 
@@ -75,12 +76,12 @@ The BS-Roformer models are a large one-time download each, stored in the app's `
 ## Output
 
 ```
-Music\Money Extractor\
+Music\ORemove\
 ├── acapellas\       <Song or video title> (Acapella).wav
 └── instrumentals\   <Song or video title> (Instrumental).wav
 ```
 
-The default folder is `Music\Money Extractor`. Click **Change** to pick another; the app remembers it. Running the same song again saves `… (Acapella) (2).wav` instead of overwriting.
+The default folder is `Music\ORemove`. Click **Change** to pick another; the app remembers it. Running the same song again saves `… (Acapella) (2).wav` instead of overwriting.
 
 ## System requirements
 
@@ -162,10 +163,10 @@ The [Windows build workflow](.github/workflows/windows-build.yml) builds both ed
 
 Only separate audio you own or have permission to use, such as your own productions, licensed material, or content whose rights holder allows it. Downloading from YouTube may be restricted by YouTube's Terms of Service. You are responsible for how you use this software and anything you create with it.
 
-Money Extractor is not affiliated with, endorsed by or sponsored by YouTube, Google, or the Ultimate Vocal Remover project.
+ORemove is not affiliated with, endorsed by or sponsored by YouTube, Google, or the Ultimate Vocal Remover project.
 
 ## License
 
-Money Extractor is released under the [MIT License](LICENSE).
+ORemove is released under the [MIT License](LICENSE).
 
 It builds on outstanding open-source work, including [Ultimate Vocal Remover](https://github.com/Anjok07/ultimatevocalremovergui) and its model authors, [audio-separator](https://github.com/nomadkaraoke/python-audio-separator), [yt-dlp](https://github.com/yt-dlp/yt-dlp), [PyTorch](https://pytorch.org), [FFmpeg](https://ffmpeg.org) and [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter). See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for their licenses and for notes on the AI models. Each download also includes the full license texts.

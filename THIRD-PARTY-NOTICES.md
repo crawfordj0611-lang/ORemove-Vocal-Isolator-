@@ -1,6 +1,6 @@
 # Third-party notices
 
-Money Extractor's own code is MIT-licensed (see [LICENSE](LICENSE)). The Windows
+ORemove's own code is MIT-licensed (see [LICENSE](LICENSE)). The Windows
 downloads also bundle the open-source components below, each under its own
 license. The full license text of every bundled Python package is included in
 the download as `THIRD-PARTY-LICENSES.txt`, generated when the app is built.
@@ -23,7 +23,7 @@ the download as `THIRD-PARTY-LICENSES.txt`, generated when the app is built.
 
 The downloads include `ffmpeg.exe` and `ffprobe.exe` from the LGPL builds at
 <https://github.com/BtbN/FFmpeg-Builds>. They are separate programs that
-Money Extractor runs; they are not modified. FFmpeg is licensed under the
+ORemove runs; they are not modified. FFmpeg is licensed under the
 GNU Lesser General Public License version 2.1 or later. Its source code is
 available at <https://ffmpeg.org/download.html> and
 <https://github.com/FFmpeg/FFmpeg>, and the exact build used is recorded in
@@ -42,12 +42,12 @@ this project:
 
 Several separation models were trained on research datasets with
 non-commercial terms, and model weights often carry their own licenses or
-none. Money Extractor is distributed free of charge; if you intend any
+none. ORemove is distributed free of charge; if you intend any
 commercial use of the models or their output, check the terms of each model
 first.
 
 ## Trademarks
 
-YouTube is a trademark of Google LLC. Money Extractor is not affiliated with,
+YouTube is a trademark of Google LLC. ORemove is not affiliated with,
 endorsed by or sponsored by YouTube, Google, or the Ultimate Vocal Remover
 project.
