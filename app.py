@@ -1,6 +1,6 @@
 """
-YT Stem Extractor & UVR Studio
-==============================
+Money Extractor
+===============
 
 A desktop app that takes a YouTube video or your own audio files and splits
 each into an Acapella (vocals) stem and an Instrumental stem using Ultimate
@@ -57,7 +57,7 @@ except ImportError:  # Friendly message instead of a bare traceback.
 # Configuration
 # --------------------------------------------------------------------------- #
 
-APP_TITLE = "YT Stem Extractor & UVR Studio"
+APP_TITLE = "Money Extractor"
 
 # True when running as the packaged Windows .exe (built with PyInstaller).
 FROZEN = getattr(sys, "frozen", False)
@@ -79,7 +79,7 @@ if FROZEN:
     os.environ["PATH"] = os.pathsep.join(str(d) for d in bundle_dirs) + os.pathsep + os.environ.get("PATH", "")
 
 # The installed app saves to the user's Music folder; from source, next to the script.
-DEFAULT_OUTPUT_DIR = (Path.home() / "Music" / "YT Stem Extractor") if FROZEN else APP_DIR / "output"
+DEFAULT_OUTPUT_DIR = (Path.home() / "Music" / "Money Extractor") if FROZEN else APP_DIR / "output"
 # UVR models are downloaded here on first use and reused after that.
 MODEL_DIR = APP_DIR / "models"
 # Remembers the chosen model, format and output folder between runs.
@@ -693,8 +693,8 @@ class StemExtractorApp(ctk.CTk):
         header.grid(row=0, column=0, sticky="ew", pady=(0, 18))
         header.grid_columnconfigure(0, weight=1)
 
-        self._label(header, "UVR STUDIO", font="eyebrow", color=ACCENT).grid(row=0, column=0, sticky="w")
-        self._label(header, "YT Stem Extractor", font="title", color=TEXT).grid(row=1, column=0, sticky="w")
+        self._label(header, "AI STEM SEPARATION", font="eyebrow", color=ACCENT).grid(row=0, column=0, sticky="w")
+        self._label(header, APP_TITLE, font="title", color=TEXT).grid(row=1, column=0, sticky="w")
 
         # Device chip: shows what the AI engine will run on once it has loaded.
         chip = ctk.CTkFrame(header, fg_color=SURFACE, corner_radius=14,

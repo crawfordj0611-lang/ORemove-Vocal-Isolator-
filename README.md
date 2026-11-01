@@ -1,120 +1,163 @@
-# Money-Extractor-YT2MP3-Tool
+<h1 align="center">Money Extractor</h1>
 
-**YT Stem Extractor & UVR Studio**: a desktop app that takes a YouTube link **or your own audio files** and gives you a clean **Acapella** and **Instrumental**, using Ultimate Vocal Remover (UVR5) models through [`audio-separator`](https://github.com/nomadkaraoke/python-audio-separator).
+<p align="center">
+  <strong>Clean acapellas and instrumentals from any YouTube link or audio file, powered by state-of-the-art UVR AI models.</strong>
+</p>
+
+<p align="center">
+  <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4">
+  <img alt="NVIDIA GPU" src="https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900">
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB">
+  <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-22C55E">
+</p>
+
+<p align="center">
+  <img src="docs/screenshot.png" alt="Money Extractor" width="640">
+</p>
+
+---
+
+## Features
+
+- **YouTube or your own files.** Paste a YouTube link, or browse for MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, WMA or AIFF files. Video files work too; only their audio is used.
+- **Batch processing.** Select several files at once. They're separated one after another with the model loaded once, and a file that can't be read is skipped without stopping the rest.
+- **Top-rated separation models.** BS-Roformer models that lead the benchmark published with [audio-separator](https://github.com/nomadkaraoke/python-audio-separator), plus a fast MDX-Net option.
+- **NVIDIA GPU acceleration.** The GPU edition runs the BS-Roformer models with CUDA, turning minutes into seconds. A CPU edition runs on any PC.
+- **Lossless quality.** Audio is decoded straight to uncompressed WAV before separation (24-bit for your own files). Export to WAV, or MP3 at 320 kbps.
+- **Organised output.** Stems land in `acapellas/` and `instrumentals/`, named after the video or file. Existing files are never overwritten.
+- **Play straight away.** Each finished song gets one-click **▶ Acapella** and **▶ Instrumental** buttons, and **Show** opens it in Explorer.
+- **Modern interface.** Dark, minimal design with a live step indicator, elapsed time, and a device badge showing whether your GPU is in use.
+- **Fast start.** The window opens instantly while the AI engine loads in the background.
+- **Remembers your choices.** Model, format and folders carry over between sessions.
+- **Self-contained.** FFmpeg and the fast model are bundled; no Python or setup needed.
+
+## Download
+
+Get the latest version from the **[Releases](https://github.com/crawfordj0611-lang/Money-Extractor-YT2MP3-Tool/releases/latest)** page.
+
+| Edition | For | Download |
+|---|---|---|
+| **GPU** (recommended) | PCs with an NVIDIA graphics card | All `Money-Extractor-GPU-Setup` files: the `.exe` and every `.bin` part |
+| **CPU** | Any 64-bit Windows PC | `Money-Extractor-Windows-CPU.zip` |
+
+**GPU edition:** save the `.exe` and all `.bin` parts into the same folder, then run `Money-Extractor-GPU-Setup.exe`. The installer is split into parts because GitHub limits each file to 2 GB. It installs for your user only (no admin rights needed), adds a Start Menu shortcut, and can be removed from **Settings → Apps**. Installing a new version upgrades the old one and keeps your downloaded models and settings.
+
+**CPU edition:** extract the zip and run `Money Extractor.exe` inside the folder. Nothing is installed.
+
+> Windows SmartScreen may warn that the app is unrecognised because it isn't code-signed. Click **More info**, then **Run anyway**.
+
+## Quick start
+
+1. **Choose a source.** Paste a YouTube link, or click **Browse** to pick one or more audio files. You can also paste a file's path.
+2. **Choose a model** from the dropdown (see [Models](#models)), a format (**WAV** or **MP3**), and where to save.
+3. **Click Extract stems.** Progress moves through **Get audio → Separate → Save**. When it's done, play the stems right from the window.
+
+Open **Show details** at any time for a technical log.
+
+## Models
+
+Every model outputs both an acapella and an instrumental. The dropdown shows what each one does best.
+
+| Model | Best for | Notes |
+|---|---|---|
+| **BS-Roformer 1297** (default) | Instrumentals | Highest-rated instrumental quality in audio-separator's benchmark. Downloaded once on first use. |
+| **BS-Roformer 1296** | Acapellas | Highest-rated acapella quality in the same benchmark. Downloaded once on first use. |
+| **MDX-Net Inst HQ 3** | Speed | Good quality in a fraction of the time. Bundled with the app. |
+
+The BS-Roformer models are a large one-time download each, stored in the app's `models` folder and reused afterwards.
+
+## Output
 
 ```
-output/
-├── acapellas/       <Song or video title> (Acapella).wav
-└── instrumentals/   <Song or video title> (Instrumental).wav
+Music\Money Extractor\
+├── acapellas\       <Song or video title> (Acapella).wav
+└── instrumentals\   <Song or video title> (Instrumental).wav
 ```
 
-## Download for Windows
-
-Both versions are on the [latest release](https://github.com/crawfordj0611-lang/Money-Extractor-YT2MP3-Tool/releases/latest).
-
-### NVIDIA GPU version (recommended)
-
-1. Download **all** the `YT-Stem-Extractor-GPU-Setup` files (the `.exe` and every `.bin` part) into the same folder. The installer is split into parts because GitHub limits each file to 2 GB.
-2. Run `YT-Stem-Extractor-GPU-Setup.exe`. It installs for your user only (no admin needed) and adds a Start Menu shortcut.
-
-Needs an NVIDIA GTX 900-series or newer card with a current driver. The top models run on the GPU, so a song takes seconds to a minute instead of many minutes.
-
-### CPU version (any PC)
-
-Download `YT-Stem-Extractor-Windows-CPU.zip`, extract it, and run `YT Stem Extractor.exe` inside the folder. It works on any 64-bit Windows PC but is much slower, especially with the BS-Roformer models.
-
-Both versions include FFmpeg and the MDX-Net model. If Windows SmartScreen warns you (the app isn't code-signed), click **More info**, then **Run anyway**.
-
-## Using it
-
-1. Choose what to separate:
-   - **A YouTube link:** paste it into the box (or click **Paste**).
-   - **Your own files:** click **Browse** and pick one or more files: MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, WMA, AIFF, or a video file (only its audio is used). Several files are processed one after another. You can also paste a file's path into the box.
-2. Choose a **Model** from the dropdown. Each entry shows the model's name and what it's best for:
-
-   | Model | Best for |
-   |---|---|
-   | **BS-Roformer 1297** (default) | Instrumentals: the cleanest of any model in audio-separator's benchmark |
-   | **BS-Roformer 1296** | Acapellas: the cleanest in the same benchmark |
-   | **MDX-Net Inst HQ 3** | Speed: good results in a fraction of the time |
-
-   Every model produces both an acapella and an instrumental; the name says which stem it does best. The two BS-Roformer models are a large one-time download the first time you use each.
-3. Choose **WAV** (lossless) or **MP3** (320 kbps), and where to save. The installed app saves to `Music\YT Stem Extractor` by default.
-4. Click **Extract stems**. When it's done, each song gets **▶ Acapella** and **▶ Instrumental** buttons that open the stem in your default player, and **Show** opens it in Explorer. In a batch, if one file can't be read it's skipped and the rest still run; **Show details** says why.
-
-The device badge in the top-right corner shows what the AI engine runs on: your GPU's name, or "CPU only". Your model, format and folder choices are remembered.
-
-Stems are named after the video title or the file name. Existing files are never overwritten: a second run of the same song saves `… (Acapella) (2).wav`. Temporary files are deleted automatically, even if a job fails.
+The default folder is `Music\Money Extractor`. Click **Change** to pick another; the app remembers it. Running the same song again saves `… (Acapella) (2).wav` instead of overwriting.
 
 ## System requirements
 
-Times are estimates; they depend on your hardware and the song's length.
-
-| | GPU version | CPU version |
+| | GPU edition | CPU edition |
 |---|---|---|
-| OS | Windows 10/11 64-bit | Windows 10/11 64-bit |
-| Graphics | NVIDIA GTX 900-series or newer, 4 GB+ video memory (8 GB+ ideal for the BS-Roformer models), current driver | Not used |
-| Processor | Any recent 4+ core | 6–8 cores recommended (4 minimum) |
-| RAM | 16 GB recommended | 8 GB minimum, 16 GB recommended |
-| Disk | ~6 GB for the app, plus ~1.5 GB for the BS-Roformer models | ~2 GB, plus ~1.5 GB for the BS-Roformer models |
-| Internet | Needed to download from YouTube and, once, the BS-Roformer models | Same |
+| **OS** | Windows 10 or 11, 64-bit | Windows 10 or 11, 64-bit |
+| **Graphics** | NVIDIA GTX 900 series or newer, 4 GB+ VRAM (8 GB+ recommended for BS-Roformer), current driver | Not used |
+| **Processor** | Any modern 4+ core CPU | 6–8 cores recommended, 4 minimum |
+| **Memory** | 16 GB recommended | 8 GB minimum, 16 GB recommended |
+| **Disk** | ~6 GB, plus ~1.5 GB for the BS-Roformer models | ~2 GB, plus ~1.5 GB for the BS-Roformer models |
+| **Internet** | For YouTube downloads and the first use of each BS-Roformer model | Same |
 
-**What to expect:**
+**Typical processing time for a 4-minute song** (estimates; they vary with hardware):
 
-- **GPU, BS-Roformer models:** roughly seconds to a minute for a 4-minute song on an RTX card.
-- **CPU, MDX-Net model:** roughly 2–6 minutes for a 4-minute song. **CPU, BS-Roformer models:** several times longer, possibly 15–30+ minutes.
-- **MDX-Net model on the GPU version** runs on the CPU (it uses ONNX Runtime, not PyTorch). It's still quick.
-- **Startup:** the window opens right away; the AI engine loads in the background (the device badge says "Loading engine…" until it's ready).
-- **File sizes:** WAV is about 10 MB per minute of audio, so a 4-minute song gives two ~40 MB stems. MP3 (320 kbps) is about 2.4 MB per minute.
+| | BS-Roformer | MDX-Net Inst HQ 3 |
+|---|---|---|
+| **GPU edition** (RTX card) | Seconds to about a minute | About a minute (runs on the CPU) |
+| **CPU edition** | 15–30+ minutes | 2–6 minutes |
+
+WAV stems take about 10 MB per minute of audio; MP3 at 320 kbps takes about 2.4 MB per minute.
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| Device badge says **CPU only** on the GPU edition | Update your NVIDIA driver, then restart the app. **Show details** shows the reason. |
+| YouTube downloads fail for videos that play fine | YouTube changes often. Install the latest release, which includes an updated downloader. |
+| "Age-restricted" or "private" video | These can't be downloaded without signing in, so they're refused. |
+| A file in a batch was skipped | **Show details** lists each skipped file and why (e.g. not a readable audio file). |
+| Windows Media Player can't open a stem | Fixed since v1.0.1. Re-extract stems made with v1.0.0. |
 
 ## Running from source
 
-For macOS/Linux, or to develop the app. You need **Python 3.10 or newer** and **FFmpeg**.
+For development, or on macOS and Linux. Requires **Python 3.10+** and **FFmpeg**.
 
-### 1. Install FFmpeg
+**1. Install FFmpeg.** On Windows: `winget install Gyan.FFmpeg`. On macOS: `brew install ffmpeg`. On Ubuntu/Debian: `sudo apt install ffmpeg python3-tk`.
 
-| OS | Command |
-|----|---------|
-| Windows | `winget install Gyan.FFmpeg` (then open a new terminal) |
-| macOS | `brew install ffmpeg` |
-| Ubuntu/Debian | `sudo apt install ffmpeg` |
-
-On Linux you may also need Tk for the GUI: `sudo apt install python3-tk`.
-
-### 2. Create a virtual environment and install
+**2. Create a virtual environment.**
 
 ```bash
 python -m venv .venv
 ```
 
-Activate it (Windows: `.venv\Scripts\activate`, macOS/Linux: `source .venv/bin/activate`). For an NVIDIA GPU, install the CUDA build of PyTorch first:
+Activate it (Windows: `.venv\Scripts\activate`; macOS/Linux: `source .venv/bin/activate`).
+
+**3. NVIDIA GPU only:** install the CUDA build of PyTorch first.
 
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 ```
 
-Then:
+**4. Install the requirements and run.**
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Apple Silicon Macs use the GPU automatically.
-
-### 3. Run
-
 ```bash
 python app.py
 ```
 
-From source, stems are saved to `output/` and models to `models/` next to `app.py`.
+From source, stems are saved to `output/` and models to `models/` next to `app.py`. Apple Silicon Macs use their GPU automatically. To add another model, extend `MODELS` at the top of `app.py`; `audio-separator --list_models` lists every available model.
 
-## Troubleshooting
+## How it works
 
-- **"FFmpeg was not found"** (from source): install FFmpeg and restart the app from a new terminal.
-- **Download errors on videos that play fine**: YouTube changes often; update yt-dlp (`pip install -U yt-dlp` from source; for the Windows app, a new release).
-- **Age-restricted / private videos** can't be downloaded without signing in, so they're refused with a message.
-- **Device badge says "CPU only" on the GPU version:** update your NVIDIA driver. Open **Show details** in the app for the reason.
-- To use another UVR model, add it to `MODELS` at the top of `app.py`. List all available models with `audio-separator --list_models`.
+1. **Get audio.** For a YouTube link, [yt-dlp](https://github.com/yt-dlp/yt-dlp) downloads the best available audio stream. For a local file, FFmpeg decodes it. Either way, the audio becomes uncompressed WAV in a private temporary folder.
+2. **Separate.** [audio-separator](https://github.com/nomadkaraoke/python-audio-separator) runs the chosen Ultimate Vocal Remover model with PyTorch or ONNX Runtime, on the GPU when available.
+3. **Save.** The stems are named after the song, sorted into `acapellas/` and `instrumentals/`, and the temporary files are deleted, even if something fails.
 
-Only download content you have the rights to use.
+All processing happens on your computer. Nothing is uploaded.
+
+### Building the Windows app
+
+The [Windows build workflow](.github/workflows/windows-build.yml) builds both editions on GitHub Actions. It packages the app with PyInstaller, bundles an LGPL build of FFmpeg, and runs a self-test of every model, both from source and with the packaged `.exe`. It then creates the CPU zip and the GPU installer with Inno Setup ([`packaging/installer.iss`](packaging/installer.iss)). To publish a release, run the workflow from the **Actions** tab with a new version number such as `v1.4.0`.
+
+## Responsible use
+
+Only separate audio you own or have permission to use, such as your own productions, licensed material, or content whose rights holder allows it. Downloading from YouTube may be restricted by YouTube's Terms of Service. You are responsible for how you use this software and anything you create with it.
+
+Money Extractor is not affiliated with, endorsed by or sponsored by YouTube, Google, or the Ultimate Vocal Remover project.
+
+## License
+
+Money Extractor is released under the [MIT License](LICENSE).
+
+It builds on outstanding open-source work, including [Ultimate Vocal Remover](https://github.com/Anjok07/ultimatevocalremovergui) and its model authors, [audio-separator](https://github.com/nomadkaraoke/python-audio-separator), [yt-dlp](https://github.com/yt-dlp/yt-dlp), [PyTorch](https://pytorch.org), [FFmpeg](https://ffmpeg.org) and [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter). See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for their licenses and for notes on the AI models. Each download also includes the full license texts.

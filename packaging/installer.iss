@@ -4,10 +4,12 @@
 ; parts under GitHub's 2 GB per-file limit: Setup.exe plus Setup-1.bin, -2.bin...
 ; Build:  set APP_VERSION=1.1.0  &&  ISCC packaging\installer.iss
 
-#define AppName "YT Stem Extractor"
+#define AppName "Money Extractor"
 #define AppVersion GetEnv("APP_VERSION")
 
 [Setup]
+; Same AppId as the earlier "YT Stem Extractor" releases, so this upgrades them in
+; place (keeping downloaded models and settings) instead of installing twice.
 AppId={{8F3C2A51-6B7E-4D2B-9C1E-5A4F7D3E2B10}
 AppName={#AppName}
 AppVersion={#AppVersion}
@@ -23,12 +25,19 @@ WizardStyle=modern
 UninstallDisplayIcon={app}\{#AppName}.exe
 SourceDir=..
 OutputDir=installer-out
-OutputBaseFilename=YT-Stem-Extractor-GPU-Setup
+OutputBaseFilename=Money-Extractor-GPU-Setup
 Compression=lzma2/fast
 LZMAUseSeparateProcess=yes
 LZMANumBlockThreads=4
 DiskSpanning=yes
 DiskSliceSize=1900000000
+LicenseFile=LICENSE
+
+[InstallDelete]
+; The program was called "YT Stem Extractor" before; remove its old .exe on upgrade.
+Type: files; Name: "{app}\YT Stem Extractor.exe"
+Type: files; Name: "{autoprograms}\YT Stem Extractor.lnk"
+Type: files; Name: "{autodesktop}\YT Stem Extractor.lnk"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"

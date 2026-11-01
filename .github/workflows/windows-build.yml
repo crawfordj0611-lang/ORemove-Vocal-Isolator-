@@ -31,7 +31,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 120
     env:
-      APP_NAME: YT Stem Extractor
+      APP_NAME: Money Extractor
       VERSION: ${{ inputs.version || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
@@ -47,16 +47,22 @@ jobs:
           # same index so its compiled operators match torch.
           pip install torch torchvision --index-url ${{ matrix.torch_index }}
           pip install -r requirements.txt
-          pip install pyinstaller
+          pip install pyinstaller pip-licenses
 
+      # LGPL build (not GPL): looser terms for redistributing it with the app.
       - name: Download FFmpeg
         shell: pwsh
         run: |
-          Invoke-WebRequest "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile ffmpeg.zip
+          Invoke-WebRequest "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip" -OutFile ffmpeg.zip
           Expand-Archive ffmpeg.zip -DestinationPath ffmpeg
           $bin = Get-ChildItem ffmpeg -Recurse -Filter ffmpeg.exe | Select-Object -First 1
           New-Item -ItemType Directory -Force ffmpeg-bin | Out-Null
           Copy-Item (Join-Path $bin.DirectoryName "ffmpeg.exe"), (Join-Path $bin.DirectoryName "ffprobe.exe") ffmpeg-bin
+          $license = Get-ChildItem ffmpeg -Recurse -Filter LICENSE* | Select-Object -First 1
+          if ($license) { Copy-Item $license.FullName ffmpeg-bin/FFMPEG-COPYING.txt }
+          # MP3 export needs the LAME encoder; fail the build if this FFmpeg lacks it.
+          $encoders = & ffmpeg-bin/ffmpeg.exe -hide_banner -encoders
+          if (-not ($encoders | Select-String libmp3lame)) { throw "FFmpeg build has no MP3 encoder" }
 
       # Same check as the .exe self-test below, but from source: if this fails,
       # the problem is a dependency, not the packaging. Runs every model (on
@@ -83,14 +89,26 @@ jobs:
           --collect-data resampy
           app.py
 
-      - name: Add FFmpeg, models and docs
+      - name: Add FFmpeg, models, docs and licenses
         shell: pwsh
         run: |
           $dist = "dist/$env:APP_NAME"
           Copy-Item ffmpeg-bin/* $dist
-          Copy-Item README.md $dist
+          Copy-Item README.md, LICENSE, THIRD-PARTY-NOTICES.md $dist
           Copy-Item models $dist -Recurse  # all models, so the next step doesn't re-download them
-          "FFmpeg (ffmpeg.exe, ffprobe.exe) is from https://github.com/BtbN/FFmpeg-Builds and is licensed under the GPL." | Set-Content "$dist/FFMPEG-LICENSE.txt"
+          # Full license text of every bundled Python package.
+          pip-licenses --with-license-file --no-license-path --with-urls --format=plain-vertical --output-file "$dist/THIRD-PARTY-LICENSES.txt"
+          $version = (& ffmpeg-bin/ffmpeg.exe -hide_banner -version | Select-Object -First 1)
+          @(
+            "ffmpeg.exe and ffprobe.exe are FFmpeg, licensed under the GNU LGPL 2.1 or later",
+            "(full text: FFMPEG-COPYING.txt). They are unmodified LGPL builds from",
+            "https://github.com/BtbN/FFmpeg-Builds (ffmpeg-master-latest-win64-lgpl).",
+            "",
+            "Build: $version",
+            "",
+            "Source code: https://github.com/FFmpeg/FFmpeg and https://ffmpeg.org/download.html",
+            "Build scripts: https://github.com/BtbN/FFmpeg-Builds"
+          ) | Set-Content "$dist/FFMPEG-LICENSE.txt"
 
       # Runs the real .exe on every model: generates a test tone, separates it,
       # and checks an acapella and an instrumental are written.
@@ -107,7 +125,7 @@ jobs:
       - name: Package (portable zip)
         if: matrix.flavor == 'cpu'
         shell: pwsh
-        run: 7z a -tzip -mx=5 YT-Stem-Extractor-Windows-CPU.zip "./dist/$env:APP_NAME"
+        run: 7z a -tzip -mx=5 Money-Extractor-Windows-CPU.zip "./dist/$env:APP_NAME"
 
       - name: Package (installer)
         if: matrix.flavor == 'cuda'
@@ -130,13 +148,15 @@ jobs:
           make_latest: true
           fail_on_unmatched_files: true
           files: |
-            ${{ matrix.flavor == 'cpu' && 'YT-Stem-Extractor-Windows-CPU.zip' || 'installer-out/*' }}
+            ${{ matrix.flavor == 'cpu' && 'Money-Extractor-Windows-CPU.zip' || 'installer-out/*' }}
           body: |
-            Windows builds of YT Stem Extractor & UVR Studio.
+            Windows builds of **Money Extractor**: AI stem separation for YouTube links and your own audio files.
 
-            **NVIDIA GPU (recommended):** download **all** `YT-Stem-Extractor-GPU-Setup` files (the `.exe` and every `.bin`) into the same folder, then run `YT-Stem-Extractor-GPU-Setup.exe`. Installs for your user only; no admin needed. Requires an NVIDIA GTX 900-series or newer card and a current driver.
+            ### NVIDIA GPU (recommended)
+            Download **all** the `Money-Extractor-GPU-Setup` files (the `.exe` and every `.bin` part) into the same folder, then run `Money-Extractor-GPU-Setup.exe`. Installs for your user only; no admin needed. Requires an NVIDIA GTX 900-series or newer card and a current driver. Upgrades earlier "YT Stem Extractor" installs in place.
 
-            **Any PC (CPU only):** download `YT-Stem-Extractor-Windows-CPU.zip`, extract it, and run `YT Stem Extractor.exe` inside. Much slower.
+            ### Any PC (CPU only)
+            Download `Money-Extractor-Windows-CPU.zip`, extract it, and run `Money Extractor.exe` inside. Much slower.
 
             FFmpeg and the MDX-Net model are included; the two BS-Roformer models download once on first use.
-            Windows SmartScreen may warn because the app isn't code-signed: click "More info" → "Run anyway".
+            Windows SmartScreen may warn because the app isn't code-signed: click **More info**, then **Run anyway**.
