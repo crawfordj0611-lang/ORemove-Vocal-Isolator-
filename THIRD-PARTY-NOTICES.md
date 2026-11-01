@@ -13,22 +13,28 @@ the download as `THIRD-PARTY-LICENSES.txt`, generated when the app is built.
 | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Downloading audio from YouTube | Unlicense (public domain) |
 | [PyTorch](https://pytorch.org) | AI engine | BSD-3-Clause |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) | Running ONNX models | MIT |
-| [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) | User interface | MIT |
+| [pywebview](https://github.com/r0x0r/pywebview) | Native window for the interface | BSD-3-Clause |
 | [librosa](https://github.com/librosa/librosa), NumPy, SciPy, soundfile and others | Audio processing | ISC / BSD |
-| [FFmpeg](https://ffmpeg.org) | Decoding and encoding audio | LGPL 2.1 or later (see below) |
+| [FFmpeg](https://ffmpeg.org) | Decoding and encoding audio | Windows: LGPL 2.1 or later; macOS: GPL v3 (see below) |
 | NVIDIA CUDA libraries (GPU version only) | GPU acceleration | NVIDIA CUDA Toolkit EULA (redistributable components) |
+| Microsoft Edge WebView2 Runtime installer (Windows NVIDIA installer only) | Installs the component the interface runs in, if missing | Microsoft redistributable terms |
 | Python | Runtime | PSF License |
 
 ## FFmpeg
 
-The downloads include `ffmpeg.exe` and `ffprobe.exe` from the LGPL builds at
-<https://github.com/BtbN/FFmpeg-Builds>. They are separate programs that
-ORemove runs; they are not modified. FFmpeg is licensed under the
-GNU Lesser General Public License version 2.1 or later. Its source code is
-available at <https://ffmpeg.org/download.html> and
-<https://github.com/FFmpeg/FFmpeg>, and the exact build used is recorded in
-`FFMPEG-LICENSE.txt` in each download. You may replace the bundled FFmpeg
+The downloads include FFmpeg's `ffmpeg` and `ffprobe` programs, unmodified.
+ORemove runs them as separate programs. The exact build used is recorded in
+`FFMPEG-LICENSE.txt` in each download, and you may replace the bundled FFmpeg
 with your own build.
+
+- **Windows:** LGPL builds from <https://github.com/BtbN/FFmpeg-Builds>,
+  licensed under the GNU Lesser General Public License version 2.1 or later.
+- **macOS:** release builds for Apple Silicon from <https://ffmpeg.martin-riedl.de>,
+  licensed under the GNU General Public License version 3 (build scripts:
+  <https://git.martin-riedl.de/ffmpeg/build-script>).
+
+FFmpeg's source code is available at <https://ffmpeg.org/download.html> and
+<https://github.com/FFmpeg/FFmpeg>.
 
 ## AI models
 
@@ -48,6 +54,6 @@ first.
 
 ## Trademarks
 
-YouTube is a trademark of Google LLC. ORemove is not affiliated with,
-endorsed by or sponsored by YouTube, Google, or the Ultimate Vocal Remover
-project.
+YouTube is a trademark of Google LLC. Apple and macOS are trademarks of Apple Inc. ORemove is not
+affiliated with, endorsed by or sponsored by YouTube, Google, Apple, or the
+Ultimate Vocal Remover project.

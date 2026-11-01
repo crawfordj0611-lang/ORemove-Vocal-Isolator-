@@ -1,13 +1,13 @@
-# GUI
-customtkinter>=5.2.2
+# Interface: a web page in a native window (Edge WebView2 on Windows,
+# WebKit on macOS). Pulls in pythonnet on Windows and pyobjc on macOS.
+pywebview>=5.3,<7
 
 # YouTube download (update often: YouTube changes break old versions)
 yt-dlp>=2026.10.26
 
 # UVR5 stem separation. Pulls in PyTorch, librosa, onnx, etc.
-# [cpu] installs onnxruntime (CPU). For an NVIDIA GPU, swap it for:
-#   audio-separator[gpu]
-# and install a CUDA build of PyTorch first (see README).
+# [cpu] installs onnxruntime (CPU). For an NVIDIA GPU, install a CUDA build
+# of PyTorch first (see README).
 audio-separator[cpu]>=0.48.0
 # audio-separator imports audioread but doesn't declare it as a dependency.
 audioread>=3.0

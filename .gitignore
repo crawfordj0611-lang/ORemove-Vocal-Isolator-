@@ -14,3 +14,5 @@ installer-out/
 dist/
 build/
 *.spec
+packaging/MicrosoftEdgeWebview2Setup.exe
+packaging/icon.icns

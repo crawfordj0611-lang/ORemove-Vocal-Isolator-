@@ -24,6 +24,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
 UninstallDisplayIcon={app}\{#AppName}.exe
+SetupIconFile=packaging\icon.ico
 SourceDir=..
 OutputDir=installer-out
 OutputBaseFilename=ORemove-NVIDIA-GPU-Setup
@@ -42,20 +43,36 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"
 
 [Files]
 Source: "dist\{#AppName}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Microsoft's WebView2 installer, used only if the PC doesn't have the runtime
+; the interface needs (it's built into Windows 11 and most Windows 10 PCs).
+Source: "packaging\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: not WebView2Installed
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppName}.exe"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppName}.exe"; Tasks: desktopicon
 
 [Run]
+Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "Installing the Microsoft Edge WebView2 Runtime..."; Flags: waituntilterminated; Check: not WebView2Installed
 Filename: "{app}\{#AppName}.exe"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 ; Models downloaded on first use and saved settings.
 Type: filesandordirs; Name: "{app}\models"
 Type: files; Name: "{app}\settings.json"
+Type: files; Name: "{app}\history.json"
 
 [Code]
+{ True if the Microsoft Edge WebView2 Runtime is installed, machine-wide or
+  for the current user. }
+function WebView2Installed(): Boolean;
+var
+  Version: String;
+begin
+  Result :=
+    (RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) and (Version <> '') and (Version <> '0.0.0.0'))
+    or (RegQueryStringValue(HKCU, 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) and (Version <> '') and (Version <> '0.0.0.0'));
+end;
+
 { True if Windows reports an NVIDIA display adapter. If the check itself
   fails, returns True so the install is never blocked by a broken query. }
 function HasNvidiaGpu(): Boolean;

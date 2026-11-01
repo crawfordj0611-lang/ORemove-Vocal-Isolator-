@@ -7,15 +7,20 @@ This guide walks you through installing **ORemove - AI Powered Vocal Isolator** 
 1. [Choose your edition](#1-choose-your-edition)
 2. [Install the NVIDIA GPU edition](#2-install-the-nvidia-gpu-edition)
 3. [Install the CPU edition](#3-install-the-cpu-edition)
-4. [First launch](#4-first-launch)
-5. [Updating](#5-updating)
-6. [Uninstalling](#6-uninstalling)
-7. [Where ORemove keeps its files](#7-where-oremove-keeps-its-files)
-8. [Installation problems](#8-installation-problems)
+4. [Install on a Mac](#4-install-on-a-mac)
+5. [First launch](#5-first-launch)
+6. [Updating](#6-updating)
+7. [Uninstalling](#7-uninstalling)
+8. [Where ORemove keeps its files](#8-where-oremove-keeps-its-files)
+9. [Installation problems](#9-installation-problems)
 
 ---
 
 ## 1. Choose your edition
+
+**On a Mac?** There's one Mac edition, for Apple Silicon (M1 or newer). Skip to [Install on a Mac](#4-install-on-a-mac).
+
+On Windows,
 
 ORemove comes in two editions. Pick the one that matches your graphics card.
 
@@ -81,7 +86,7 @@ Wait until **all three downloads have finished** before continuing. Your browser
 
 You can delete the three downloaded setup files afterwards.
 
-ORemove is now in your **Start Menu**. Continue with [First launch](#4-first-launch).
+ORemove is now in your **Start Menu**. Continue with [First launch](#5-first-launch).
 
 ---
 
@@ -112,28 +117,66 @@ Keep everything in the ORemove folder together; the program needs the other file
 
 ---
 
-## 4. First launch
+## 4. Install on a Mac
+
+The Mac edition works on Macs with **Apple Silicon** (M1, M2, M3, M4 or newer) running **macOS 13 Ventura or newer**. It uses the Mac's built-in GPU automatically. Intel Macs are not supported. To check your Mac, open the **Apple menu → About This Mac** and look at **Chip**.
+
+### Step 1: Download and install
+
+1. Download [ORemove-macOS-AppleSilicon.dmg](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest/download/ORemove-macOS-AppleSilicon.dmg).
+2. Open the `.dmg` and drag **ORemove** onto the **Applications** folder.
+3. Eject the disk image (the ⏏ button next to it in Finder).
+
+### Step 2: Allow it to open (first time only)
+
+ORemove isn't notarized by Apple, so macOS blocks it the first time. You only need to do this once.
+
+**macOS 15 Sequoia and newer:**
+
+1. Open **ORemove** from Applications. macOS says it couldn't verify the app. Click **Done**.
+2. Open **System Settings → Privacy & Security**, scroll down, and next to *"ORemove" was blocked*, click **Open Anyway**.
+3. Enter your password if asked, then click **Open Anyway** again.
+
+**macOS 13 Ventura and 14 Sonoma:** Control-click (or right-click) **ORemove** in Applications, choose **Open**, then click **Open** in the message.
+
+**If macOS says the app "is damaged and can't be opened":** that's the same block. Open **Terminal** and run this, then open ORemove again:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/ORemove.app
+```
+
+Continue with [First launch](#5-first-launch).
+
+---
+
+## 5. First launch
 
 1. **Wait for the device badge.** The window opens straight away. The badge in the top-right corner says **Loading engine…** for a few seconds, then shows what ORemove will run on:
 
    | Badge | Meaning |
    |---|---|
    | Your card's name with a **green** dot, e.g. **RTX 4070 SUPER** | The NVIDIA GPU is being used. |
-   | **No NVIDIA GPU** with an **orange** dot (NVIDIA GPU edition) | The GPU can't be used: your NVIDIA driver is probably out of date. See [Installation problems](#8-installation-problems). |
+   | **Apple GPU** with a **green** dot (Mac) | The Mac's GPU is being used. |
+   | **No NVIDIA GPU** with an **orange** dot (NVIDIA GPU edition) | The GPU can't be used: your NVIDIA driver is probably out of date. See [Installation problems](#9-installation-problems). |
    | **CPU only** with an **orange** dot (CPU edition) | Normal for the CPU edition. |
 
-2. **Try a song.** Paste a YouTube link or click **Browse** to pick an audio file, then click **Extract stems**.
-3. **First use of a BS-Roformer model** downloads it once (610 MB). This needs an internet connection, and the status line says **Downloading model (first use only)…**. After that, the model is reused.
+2. **Try a song.** Drag an audio file onto the window, click **Browse files**, or paste a YouTube link and click **Separate**.
+3. **First use of a BS-Roformer model** downloads it once (610 MB). This needs an internet connection, and the progress screen says **Downloading model (first use only)…**. After that, the model is reused.
+4. **Listen.** When it's done, play the **Vocals** and **Instrumental** cards right in the window.
 
-Your stems are saved to **Music\ORemove**, in an **acapellas** and an **instrumentals** folder. See the [README](README.md#quick-start) for how to use the app.
+Your stems are saved to **Music/ORemove** in your user folder, in an **acapellas** and an **instrumentals** folder. See the [README](README.md#quick-start) for how to use the app.
 
 ---
 
-## 5. Updating
+## 6. Updating
 
 ### NVIDIA GPU edition
 
 Download all three files of the new version and run the installer, exactly as in [section 2](#2-install-the-nvidia-gpu-edition). It upgrades your existing installation and keeps your downloaded models and settings. You don't need to uninstall first.
+
+### Mac
+
+Download the new `.dmg` and drag **ORemove** into **Applications** again, choosing **Replace**. Your models, settings and history are kept.
 
 ### CPU edition
 
@@ -143,7 +186,7 @@ Download all three files of the new version and run the installer, exactly as in
 
 ---
 
-## 6. Uninstalling
+## 7. Uninstalling
 
 ### NVIDIA GPU edition
 
@@ -156,34 +199,42 @@ This removes the program, its downloaded models and its settings.
 
 Delete the ORemove folder.
 
+### Mac
+
+1. Drag **ORemove** from **Applications** to the **Trash**.
+2. To also remove its downloaded models, settings and history, open Finder, choose **Go → Go to Folder…**, enter `~/Library/Application Support/ORemove`, and move that folder to the Trash.
+
 **Either edition:** your extracted stems in **Music\ORemove** are never deleted. Remove them yourself if you no longer need them.
 
 ---
 
-## 7. Where ORemove keeps its files
+## 8. Where ORemove keeps its files
 
-| What | NVIDIA GPU edition | CPU edition |
-|---|---|---|
-| Program | `%LOCALAPPDATA%\Programs\ORemove` | The folder you extracted |
-| Downloaded models | `models` inside the program folder | `models` inside the ORemove folder |
-| Settings | `settings.json` inside the program folder | `settings.json` inside the ORemove folder |
-| Your stems | `Music\ORemove` (change it in the app with **Change**) | Same |
+| What | NVIDIA GPU edition | CPU edition | Mac |
+|---|---|---|---|
+| Program | `%LOCALAPPDATA%\Programs\ORemove` | The folder you extracted | `Applications/ORemove` |
+| Downloaded models | `models` inside the program folder | `models` inside the ORemove folder | `~/Library/Application Support/ORemove/models` |
+| Settings and history | `settings.json` and `history.json` inside the program folder | Same, inside the ORemove folder | `~/Library/Application Support/ORemove` |
+| Your stems | `Music\ORemove` (change it in **Settings**) | Same | `Music/ORemove` (change it in **Settings**) |
 
 To open the program folder of the NVIDIA GPU edition, press **Win + R**, type `%LOCALAPPDATA%\Programs\ORemove`, and press **Enter**.
 
 ---
 
-## 8. Installation problems
+## 9. Installation problems
 
 | Problem | Solution |
 |---|---|
+| **Windows: "The interface could not start… WebView2"** | Install the free [Microsoft Edge WebView2 Runtime](https://go.microsoft.com/fwlink/p/?LinkId=2124703), then start ORemove again. The NVIDIA installer does this for you; the CPU edition relies on it being present (it's built into Windows 11 and most Windows 10 PCs). |
+| **Mac: "ORemove Not Opened", "can't be opened" or "is damaged"** | See [Allow it to open](#step-2-allow-it-to-open-first-time-only). |
+| **Mac: "You can't open ORemove because this application is not supported on this Mac"** | Your Mac has an Intel chip. Only Apple Silicon Macs (M1 or newer) are supported. |
 | **"Windows protected your PC"** | Click **More info**, then **Run anyway**. It appears because ORemove isn't code-signed. |
 | **Browser blocks the download** ("isn't commonly downloaded") | In the browser's download list, choose **Keep**, then **Keep anyway**. |
 | **The installer asks for a disk or a `.bin` file** ("Setup needs the next disk") | A `.bin` part is missing, still downloading, or in a different folder. Put all three files in the same folder, then click **OK**, or **Browse** to the folder that holds them. |
 | **The installer says no NVIDIA graphics card was found** | Your PC has no NVIDIA card Windows can see. Use the [CPU edition](#3-install-the-cpu-edition). |
-| **The badge says "No NVIDIA GPU"** on a PC with an NVIDIA card | Update your NVIDIA driver from [nvidia.com/drivers](https://www.nvidia.com/drivers) or the NVIDIA app, restart your PC, then open ORemove again. **Show details** in the app shows more. |
+| **The badge says "No NVIDIA GPU"** on a PC with an NVIDIA card | Update your NVIDIA driver from [nvidia.com/drivers](https://www.nvidia.com/drivers) or the NVIDIA app, restart your PC, then open ORemove again. **Settings → Activity log** in the app shows more. |
 | **Antivirus quarantines ORemove** | Some antivirus products flag unsigned apps built with PyInstaller by mistake. Restore the file and add an exception for the ORemove folder, or download it again from the official [Releases page](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest). |
 | **"Not enough disk space"** | Free up space on drive C:. The NVIDIA GPU edition needs about 6 GB, plus 1.2 GB for both BS-Roformer models; 10 GB free is recommended. |
 | **ORemove doesn't start** (CPU edition) | Make sure you extracted the zip (see [section 3](#3-install-the-cpu-edition)) and that all its files are still in the folder. |
 
-Still stuck? [Open an issue](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/issues) with your Windows version, your graphics card, and what you see. Include the text from **Show details** if the app opens.
+Still stuck? [Open an issue](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/issues) with your Windows or macOS version, your graphics card or Mac model, and what you see. Include the text from **Settings → Activity log** if the app opens.

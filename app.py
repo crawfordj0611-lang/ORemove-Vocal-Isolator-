@@ -6,7 +6,11 @@ A desktop app that takes a YouTube video or your own audio files and splits
 each into an Acapella (vocals) stem and an Instrumental stem using Ultimate
 Vocal Remover (UVR5) models, run through the `audio-separator` library.
 
-Pipeline (runs on a background thread so the window never freezes):
+The interface is a web page (ui/) shown in a native window by pywebview. It
+calls the Api class below and polls it for progress events; the engine runs
+on a background thread so the window never freezes.
+
+Pipeline:
     1. Check FFmpeg is on PATH.
     2. Get the audio as WAV in a temporary folder: for a YouTube link, yt-dlp
        reads the title and downloads the best audio stream; for a local file
@@ -19,10 +23,7 @@ Pipeline (runs on a background thread so the window never freezes):
 
 The AI engine (PyTorch) takes a while to import, so it starts loading in the
 background as soon as the window opens. An NVIDIA GPU is used automatically
-when the CUDA build of PyTorch is installed.
-
-The worker thread never touches a widget. It puts messages on a queue, and
-the GUI drains that queue every 100 ms from the Tk main loop.
+when the CUDA build of PyTorch is installed; Apple Silicon GPUs on macOS.
 
 Run:  python app.py
 """
@@ -44,13 +45,9 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-import tkinter as tk
-from tkinter import filedialog
-
-try:
-    import customtkinter as ctk
-except ImportError:  # Friendly message instead of a bare traceback.
-    sys.exit("customtkinter is not installed. Run:  pip install -r requirements.txt")
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import unquote
 
 
 # --------------------------------------------------------------------------- #
@@ -59,13 +56,21 @@ except ImportError:  # Friendly message instead of a bare traceback.
 
 APP_TITLE = "ORemove"
 APP_TAGLINE = "AI Powered Vocal Isolator"
+APP_VERSION = "1.5.0"
 
-# True when running as the packaged Windows .exe (built with PyInstaller).
+# True when running as the packaged app (built with PyInstaller).
 FROZEN = getattr(sys, "frozen", False)
+MACOS = sys.platform == "darwin"
 
-# The packaged app keeps output/ and models/ next to the .exe; from source,
-# next to this script.
+# Folder holding the program; from source, this script's folder.
 APP_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent
+# Read-only files bundled with the app (the interface, FFmpeg, the fast model).
+BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
+UI_DIR = BUNDLE_DIR / "ui"
+# Where models, settings and history are kept. On Windows (and from source)
+# that's next to the program; a macOS app bundle must not be written to, so
+# there it's ~/Library/Application Support/ORemove.
+DATA_DIR = (Path.home() / "Library" / "Application Support" / "ORemove") if (FROZEN and MACOS) else APP_DIR
 
 if FROZEN:
     # A windowed .exe has no console, so sys.stdout/stderr are None and any
@@ -82,37 +87,32 @@ if FROZEN:
 # The installed app saves to the user's Music folder; from source, next to the script.
 DEFAULT_OUTPUT_DIR = (Path.home() / "Music" / "ORemove") if FROZEN else APP_DIR / "output"
 # UVR models are downloaded here on first use and reused after that.
-MODEL_DIR = APP_DIR / "models"
-# Remembers the chosen model, format and output folder between runs.
-SETTINGS_FILE = APP_DIR / "settings.json"
+MODEL_DIR = DATA_DIR / "models"
+# Remembers the chosen model, quality, format and output folder between runs.
+SETTINGS_FILE = DATA_DIR / "settings.json"
+# The songs separated so far (shown under History).
+HISTORY_FILE = DATA_DIR / "history.json"
 
 
 @dataclass(frozen=True)
 class ModelOption:
     name: str      # the model's name
-    best_for: str  # what it is best at, shown next to the name in the dropdown
+    best_for: str  # what it is best at
     filename: str  # model file name known to audio-separator
-    note: str      # one extra line shown under the dropdown
-
-    @property
-    def label(self) -> str:
-        return f"{self.name}  —  {self.best_for}"
+    size: str      # download size, shown in Settings
 
 
 # Ranked by audio-separator's published benchmark (median SDR over 40 songs).
 # List every model audio-separator knows with:  audio-separator --list_models
 MODELS = [
     ModelOption("BS-Roformer 1297", "Best for instrumentals",
-                "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
-                "Highest-rated instrumental quality  ·  large one-time download on first use"),
+                "model_bs_roformer_ep_317_sdr_12.9755.ckpt", "610 MB"),
     ModelOption("BS-Roformer 1296", "Best for acapellas",
-                "model_bs_roformer_ep_368_sdr_12.9628.ckpt",
-                "Highest-rated acapella quality  ·  large one-time download on first use"),
+                "model_bs_roformer_ep_368_sdr_12.9628.ckpt", "610 MB"),
     ModelOption("MDX-Net Inst HQ 3", "Fastest",
-                "UVR-MDX-NET-Inst_HQ_3.onnx",
-                "Good quality in a fraction of the time  ·  included"),
+                "UVR-MDX-NET-Inst_HQ_3.onnx", "Included"),
 ]
-MODELS_BY_LABEL = {m.label: m for m in MODELS}
+MODELS_BY_FILE = {m.filename: m for m in MODELS}
 
 OUTPUT_FORMATS = ["WAV", "MP3"]  # WAV is lossless; MP3 is written at 320 kbps
 
@@ -127,33 +127,19 @@ DOWNLOAD_SHARE = 0.40   # 0 % -> 40 %  : yt-dlp download
 MODEL_LOAD_AT = 0.45    # 45 %         : model loaded, separation starts
 SEPARATED_AT = 0.95     # 95 %         : stems written, moving files
 
-# Design tokens: a near-black neutral palette with one green accent.
-BG = "#0B0B0E"
-SURFACE = "#141418"
-FIELD = "#1C1C22"
-BORDER = "#2A2A32"
-TEXT = "#F4F4F5"
-MUTED = "#8E8E9A"
-SUBTLE = "#55555F"
-ACCENT = "#22C55E"
-ACCENT_HOVER = "#1EAE53"
-ON_ACCENT = "#04130A"
-DANGER = "#F87171"
-
-if sys.platform.startswith("win"):
-    UI_FONT, MONO_FONT = "Segoe UI", "Cascadia Mono"
-elif sys.platform == "darwin":
-    UI_FONT, MONO_FONT = "Helvetica Neue", "Menlo"
-else:
-    UI_FONT, MONO_FONT = "DejaVu Sans", "DejaVu Sans Mono"
-
-
 # --------------------------------------------------------------------------- #
 # Helpers (no GUI code here, so they are easy to test or reuse)
 # --------------------------------------------------------------------------- #
 
 class PipelineError(Exception):
     """An expected failure with a message meant for the user."""
+
+
+class Cancelled(PipelineError):
+    """The user pressed Stop."""
+
+    def __init__(self):
+        super().__init__("Stopped")
 
 
 @dataclass
@@ -198,8 +184,8 @@ def unique_path(path: Path) -> Path:
 
 # File types offered by the Browse dialog. FFmpeg reads all of these (video files
 # too: only their audio is used).
-AUDIO_FILE_TYPES = ("*.mp3 *.wav *.flac *.m4a *.aac *.ogg *.opus *.wma *.aiff *.aif "
-                    "*.alac *.mp4 *.mkv *.mov *.webm")
+AUDIO_EXTENSIONS = ("mp3", "wav", "flac", "m4a", "aac", "ogg", "opus", "wma", "aiff", "aif",
+                    "alac", "mp4", "mkv", "mov", "webm")
 
 # Keeps FFmpeg from flashing a console window when run from the windowed .exe.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0
@@ -227,6 +213,8 @@ def reveal_in_file_manager(path: Path) -> None:
     """Show a file selected in Explorer (elsewhere: open its folder)."""
     if sys.platform.startswith("win"):
         subprocess.Popen(["explorer", "/select,", str(path)])
+    elif MACOS:
+        subprocess.Popen(["open", "-R", str(path)])
     else:
         open_path(path.parent)
 
@@ -240,6 +228,7 @@ def load_settings() -> dict:
 
 def save_settings(settings: dict) -> None:
     try:
+        SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
         SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     except Exception:
         pass  # settings are a convenience; never fail a run over them
@@ -319,11 +308,19 @@ class ExtractionPipeline:
     for the whole batch ("File 2 of 3 · ..."), and the model is loaded once.
     """
 
-    def __init__(self, log, progress, stage=lambda _name, _detail: None):
+    def __init__(self, log, progress, stage=lambda _name, _detail: None,
+                 title=lambda _text: None, cancel_event: threading.Event | None = None):
         self.log = log
         self._progress_cb = progress
         self._stage_cb = stage
+        self._title_cb = title
+        self.cancel_event = cancel_event or threading.Event()
         self._index, self._count = 0, 1  # position in the current batch
+
+    def check_cancel(self):
+        """Stop between steps once the user has pressed Stop."""
+        if self.cancel_event.is_set():
+            raise Cancelled()
 
     def progress(self, value):
         """Report progress of the current item, scaled to the whole batch."""
@@ -374,6 +371,7 @@ class ExtractionPipeline:
         last_reported = {"pct": -10}
 
         def on_progress(d):
+            self.check_cancel()  # aborts the download; reported as Cancelled below
             if d.get("status") == "downloading":
                 total = d.get("total_bytes") or d.get("total_bytes_estimate")
                 if total:
@@ -412,7 +410,8 @@ class ExtractionPipeline:
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
-        except DownloadError as exc:
+        except (DownloadError, Cancelled) as exc:
+            self.check_cancel()
             raise PipelineError(self._explain_download_error(exc)) from exc
 
         wav = work_dir / "source.wav"
@@ -447,12 +446,19 @@ class ExtractionPipeline:
         if not src.is_file():
             raise PipelineError(f"File not found: {src}")
         # 24-bit keeps the full quality of 24-bit WAV/FLAC sources.
-        result = subprocess.run(
+        proc = subprocess.Popen(
             ["ffmpeg", "-v", "error", "-y", "-i", str(src), "-vn", "-ac", "2",
              "-c:a", "pcm_s24le", str(dest)],
-            capture_output=True, text=True, creationflags=NO_WINDOW)
-        if result.returncode != 0 or not dest.exists():
-            reason = (result.stderr.strip().splitlines() or ["not a readable audio file"])[-1]
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, creationflags=NO_WINDOW)
+        while proc.poll() is None:
+            if self.cancel_event.is_set():
+                proc.kill()
+                proc.wait()
+                raise Cancelled()
+            time.sleep(0.1)
+        stderr = proc.stderr.read()
+        if proc.returncode != 0 or not dest.exists():
+            reason = (stderr.strip().splitlines() or ["not a readable audio file"])[-1]
             raise PipelineError(f"Couldn't read {src.name}: {reason}")
         self.progress(DOWNLOAD_SHARE)
         return dest
@@ -615,11 +621,12 @@ class ExtractionPipeline:
 
     # ---- Whole job --------------------------------------------------------
 
-    def run(self, job: Job) -> tuple[list[Path], list[str]]:
+    def run(self, job: Job) -> tuple[list[dict], list[str]]:
         """
-        Process every source in `job`. Returns (saved stem paths, failure messages).
-        A single source raises on failure; in a batch, a failed item is skipped
-        and reported, and the rest still run.
+        Process every source in `job`. Returns (songs, failure messages), where
+        each song is {"title": str, "stems": [saved stem paths]}. A single
+        source raises on failure; in a batch, a failed item is skipped and
+        reported, and the rest still run. Stop raises Cancelled.
         """
         if not ffmpeg_available():
             raise PipelineError(
@@ -637,7 +644,9 @@ class ExtractionPipeline:
             for i, source in enumerate(job.sources):
                 self._index = i
                 try:
-                    saved += self._run_one(source, i, job, work_dir, stems_dir)
+                    saved.append(self._run_one(source, i, job, work_dir, stems_dir))
+                except Cancelled:
+                    raise
                 except PipelineError as exc:
                     if self._count == 1:
                         raise
@@ -650,596 +659,504 @@ class ExtractionPipeline:
             raise PipelineError(f"None of the files could be processed. {failures[0]}")
         return saved, failures
 
-    def _run_one(self, source: str, i: int, job: Job, work_dir: Path, stems_dir: Path) -> list[Path]:
+    def _run_one(self, source: str, i: int, job: Job, work_dir: Path, stems_dir: Path) -> dict:
         """Get one source as WAV, separate it, and save its stems."""
+        self.check_cancel()
         wav = work_dir / f"input{i}.wav"  # unique per item: stems are named after it
         if looks_like_url(source):
             if not is_youtube_url(source):
                 raise PipelineError("Only YouTube links are supported (youtube.com or youtu.be).")
-            base_name = sanitize_filename(self.fetch_title(source))
+            title = self.fetch_title(source)
+            self._title_cb(title)
+            self.check_cancel()
             download_dir = work_dir / f"download{i}"
             download_dir.mkdir()
             self.download_wav(source, download_dir).replace(wav)
         else:
             src = Path(source)
-            base_name = sanitize_filename(src.stem)
+            title = src.stem
+            self._title_cb(title)
             self.convert_local_file(src, wav)
+        base_name = sanitize_filename(title)
 
+        self.check_cancel()
         stems = self.separate(wav, job, stems_dir)
-        saved = self.file_stems(stems, base_name, job.output_dir)
-        # Free disk space as we go; a batch of long WAVs adds up.
-        for path in [wav, *stems]:
-            path.unlink(missing_ok=True)
-        return saved
+        try:
+            self.check_cancel()  # separation can't be interrupted; discard its result instead
+            saved = self.file_stems(stems, base_name, job.output_dir)
+        finally:
+            # Free disk space as we go; a batch of long WAVs adds up.
+            for path in [wav, *stems]:
+                path.unlink(missing_ok=True)
+        return {"title": title, "stems": saved}
 
 
 # --------------------------------------------------------------------------- #
-# GUI
+# Interface support: waveforms, history, local file server
 # --------------------------------------------------------------------------- #
 
-STAGES = [("download", "Get audio"), ("separate", "Separate"), ("save", "Save")]
+def waveform(path: Path, points: int = 200) -> tuple[list[float], float]:
+    """Peak levels (0..1) across the file for drawing its waveform, and its duration."""
+    try:
+        import numpy as np
+        import soundfile as sf
+        with sf.SoundFile(str(path)) as f:
+            duration = f.frames / f.samplerate
+            block = max(1, f.frames // points)
+            peaks = []
+            for data in f.blocks(blocksize=block, dtype="float32", always_2d=True):
+                peaks.append(float(np.abs(data).max()) if len(data) else 0.0)
+        top = max(peaks) or 1.0
+        return [round(p / top, 3) for p in peaks[:points]], duration
+    except Exception:
+        return [], 0.0
 
 
-def short_path(path: Path, limit: int = 34) -> str:
-    """Shorten a long path from the left so the end (the folder name) stays visible."""
-    text = str(path)
-    return text if len(text) <= limit else "…" + text[-(limit - 1):]
+def human_size(path: Path) -> str:
+    try:
+        return f"{path.stat().st_size / 1_048_576:.1f} MB"
+    except OSError:
+        return ""
 
 
-class ORemoveApp(ctk.CTk):
+STEM_KINDS = {"acapellas": "Acapella", "instrumentals": "Instrumental"}
+
+
+def load_history() -> list[dict]:
+    try:
+        return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+def add_to_history(entries: list[dict]) -> None:
+    try:
+        history = (entries + load_history())[:100]
+        HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        HISTORY_FILE.write_text(json.dumps(history, indent=1), encoding="utf-8")
+    except Exception:
+        pass  # history is a convenience; never fail a run over it
+
+
+class LocalServer:
+    """
+    Serves the interface (ui/) and finished stems to the window over
+    http://127.0.0.1 on a random port. Stems are only reachable through
+    unguessable tokens handed out by the app. Supports byte ranges, so the
+    audio player can seek.
+    """
+
+    TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript",
+             ".wav": "audio/wav", ".mp3": "audio/mpeg", ".svg": "image/svg+xml", ".png": "image/png"}
+
     def __init__(self):
-        super().__init__()
-        ctk.set_appearance_mode("dark")
+        self.files: dict[str, Path] = {}
+        server = self
 
-        self.title(f"{APP_TITLE} - {APP_TAGLINE}")
-        self.configure(fg_color=BG)
-        self.geometry("780x840")
-        self.minsize(660, 760)
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args):
+                pass  # keep quiet
 
-        # Restore last session's choices.
-        self.settings = load_settings()
-        self.output_dir = Path(self.settings.get("output_dir") or DEFAULT_OUTPUT_DIR)
-        model_label = self.settings.get("model")
-        self.model_label = model_label if model_label in MODELS_BY_LABEL else MODELS[0].label
-        fmt = self.settings.get("format")
-        self.output_format = fmt if fmt in OUTPUT_FORMATS else OUTPUT_FORMATS[0]
-        quality = self.settings.get("quality")
-        self.quality = quality if quality in QUALITY_MODES else QUALITY_MODES[0]
+            def do_GET(self):
+                route = unquote(self.path.split("?", 1)[0])
+                if route.startswith("/audio/"):
+                    token = route[len("/audio/"):].split(".", 1)[0]  # URL ends in .wav/.mp3
+                    path = server.files.get(token)
+                else:
+                    path = (UI_DIR / route.lstrip("/")).resolve()
+                    if UI_DIR.resolve() not in path.parents:
+                        path = None
+                if not path or not path.is_file():
+                    self.send_error(404)
+                    return
+                self.send_file(path)
 
-        self.events: queue.Queue = queue.Queue()  # worker threads -> GUI messages
-        self.worker: threading.Thread | None = None
-        self.job_started_at: float | None = None
-        self.progress_indeterminate = False
-        self.details_visible = False
+            def send_file(self, path: Path):
+                size = path.stat().st_size
+                start, end = 0, size - 1
+                match = re.match(r"bytes=(\d*)-(\d*)", self.headers.get("Range", ""))
+                if match and (match.group(1) or match.group(2)):
+                    if match.group(1):
+                        start = int(match.group(1))
+                        end = int(match.group(2)) if match.group(2) else end
+                    else:  # "bytes=-N": the last N bytes
+                        start = max(0, size - int(match.group(2)))
+                    end = min(end, size - 1)
+                    self.send_response(206)
+                    self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+                else:
+                    self.send_response(200)
+                self.send_header("Content-Type", server.TYPES.get(path.suffix.lower(), "application/octet-stream"))
+                self.send_header("Content-Length", str(end - start + 1))
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                try:
+                    with open(path, "rb") as f:
+                        f.seek(start)
+                        left = end - start + 1
+                        while left > 0:
+                            chunk = f.read(min(1 << 16, left))
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                            left -= len(chunk)
+                except (ConnectionError, OSError):
+                    pass  # the player stopped reading (seek or pause)
 
-        self.fonts = {
-            "eyebrow": ctk.CTkFont(UI_FONT, 11, "bold"),
-            "title": ctk.CTkFont(UI_FONT, 26, "bold"),
-            "label": ctk.CTkFont(UI_FONT, 12, "bold"),
-            "body": ctk.CTkFont(UI_FONT, 13),
-            "small": ctk.CTkFont(UI_FONT, 12),
-            "button": ctk.CTkFont(UI_FONT, 15, "bold"),
-            "mono": ctk.CTkFont(MONO_FONT, 11),
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.httpd.daemon_threads = True
+        self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self.port}/index.html"
+
+    def audio_url(self, path: Path) -> str:
+        token = uuid.uuid4().hex
+        self.files[token] = path
+        return f"http://127.0.0.1:{self.port}/audio/{token}{path.suffix.lower()}"
+
+
+# --------------------------------------------------------------------------- #
+# Bridge between the interface (ui/app.js) and the engine
+# --------------------------------------------------------------------------- #
+
+def _dialog(kind: str):
+    """pywebview's dialog type ("OPEN" or "FOLDER"), across pywebview versions."""
+    import webview
+    if hasattr(webview, "FileDialog"):
+        return getattr(webview.FileDialog, kind)
+    return getattr(webview, f"{kind}_DIALOG")
+
+
+class Api:
+    """
+    Methods the page calls through window.pywebview.api. Each returns plain
+    JSON-able data. Long work runs on a worker thread, which reports through
+    an event queue that the page drains by calling poll().
+    """
+
+    def __init__(self, server: LocalServer):
+        self._server = server
+        self._events: queue.Queue = queue.Queue()
+        self._worker: threading.Thread | None = None
+        self._cancel = threading.Event()
+        self._device = ""
+        self.engine_error = ""
+        self.window = None  # set by main() once the window exists
+        self.ready_event = threading.Event()
+        settings = load_settings()
+        model = settings.get("model")
+        self._settings = {
+            "model": model if model in MODELS_BY_FILE else MODELS[0].filename,
+            "quality": settings.get("quality") if settings.get("quality") in QUALITY_MODES else QUALITY_MODES[0],
+            "format": settings.get("format") if settings.get("format") in OUTPUT_FORMATS else OUTPUT_FORMATS[0],
+            "output_dir": settings.get("output_dir") or str(DEFAULT_OUTPUT_DIR),
         }
 
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=1)
-        self.body = ctk.CTkFrame(self, fg_color="transparent")
-        self.body.grid(row=0, column=0, sticky="nsew", padx=32, pady=(22, 16))
-        self.body.grid_columnconfigure(0, weight=1)
-        self.body.grid_rowconfigure(7, weight=1)  # the details log takes spare height
+    # Events -----------------------------------------------------------------
 
-        self._build_header()
-        self._build_source()
-        self._build_options()
-        self._build_extract_button()
-        self._build_progress()
-        self._build_results()
-        self._build_footer()
+    def emit(self, event_type: str, **data):
+        self._events.put({"type": event_type, **data})
 
-        self.log(f"Stems will be saved to: {self.output_dir}")
-        if not ffmpeg_available():
-            self._set_status("FFmpeg is missing. Install it before extracting (see README).", DANGER)
-            self.log("WARNING: FFmpeg not found on PATH.")
+    def poll(self) -> list[dict]:
+        events = []
+        while True:
+            try:
+                events.append(self._events.get_nowait())
+            except queue.Empty:
+                return events
 
-        # Import the AI engine now, while the user is still pasting a link.
-        threading.Thread(target=self._preload_engine, daemon=True).start()
-        self.after(100, self._drain_events)
+    def ready(self):
+        """Called by the page once it has loaded."""
+        self.ready_event.set()
 
-    # ---- Building blocks ---------------------------------------------------
-
-    def _card(self, row: int, pady=(0, 12)) -> ctk.CTkFrame:
-        card = ctk.CTkFrame(self.body, fg_color=SURFACE, corner_radius=14,
-                            border_width=1, border_color=BORDER)
-        card.grid(row=row, column=0, sticky="ew", pady=pady)
-        card.grid_columnconfigure(0, weight=1)
-        return card
-
-    def _label(self, parent, text, font="label", color=MUTED, **kw) -> ctk.CTkLabel:
-        return ctk.CTkLabel(parent, text=text, font=self.fonts[font], text_color=color,
-                            anchor="w", **kw)
-
-    def _ghost_button(self, parent, text, command, width=76, height=34, color=TEXT):
-        return ctk.CTkButton(parent, text=text, command=command, width=width, height=height,
-                             corner_radius=10, fg_color="transparent", hover_color=FIELD,
-                             border_width=1, border_color=BORDER, text_color=color,
-                             font=self.fonts["small"])
-
-    def _segmented(self, parent, values, value, command):
-        seg = ctk.CTkSegmentedButton(
-            parent, values=values, command=command, height=38, corner_radius=10,
-            font=self.fonts["body"], fg_color=FIELD, unselected_color=FIELD,
-            unselected_hover_color="#25252D", selected_color="#34343F",
-            selected_hover_color="#3B3B47", text_color=TEXT, text_color_disabled=SUBTLE)
-        seg.set(value)
-        return seg
-
-    # ---- Layout ------------------------------------------------------------
-
-    def _build_header(self):
-        header = ctk.CTkFrame(self.body, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 18))
-        header.grid_columnconfigure(0, weight=1)
-
-        self._label(header, APP_TAGLINE.upper(), font="eyebrow", color=ACCENT).grid(row=0, column=0, sticky="w")
-        self._label(header, APP_TITLE, font="title", color=TEXT).grid(row=1, column=0, sticky="w")
-
-        # Device chip: shows what the AI engine will run on once it has loaded.
-        chip = ctk.CTkFrame(header, fg_color=SURFACE, corner_radius=14,
-                            border_width=1, border_color=BORDER)
-        chip.grid(row=0, column=1, rowspan=2, sticky="e")
-        self.device_dot = ctk.CTkLabel(chip, text="●", text_color=SUBTLE, font=self.fonts["small"])
-        self.device_dot.pack(side="left", padx=(12, 6), pady=5)
-        self.device_label = self._label(chip, "Loading engine…", font="small", color=MUTED)
-        self.device_label.pack(side="left", padx=(0, 14), pady=5)
-
-    def _build_source(self):
-        card = self._card(row=1)
-        self._label(card, "YouTube link or audio file").grid(row=0, column=0, columnspan=3,
-                                                             sticky="w", padx=20, pady=(16, 8))
-        self.url_entry = ctk.CTkEntry(
-            card, height=46, corner_radius=10, font=self.fonts["body"],
-            fg_color=FIELD, border_color=BORDER, border_width=1, text_color=TEXT,
-            placeholder_text="Paste a YouTube link, or browse for audio files",
-            placeholder_text_color=SUBTLE)
-        self.url_entry.grid(row=1, column=0, sticky="ew", padx=(20, 8), pady=(0, 20))
-        self.url_entry.bind("<Return>", lambda _e: self.start_extraction())
-
-        self.paste_button = self._ghost_button(card, "Paste", self._paste_url, height=46)
-        self.paste_button.grid(row=1, column=1, padx=(0, 8), pady=(0, 20))
-        self.browse_button = self._ghost_button(card, "Browse", self._browse_files, height=46,
-                                                width=84)
-        self.browse_button.grid(row=1, column=2, padx=(0, 20), pady=(0, 20))
-
-        # Files picked with Browse. When several are picked the entry shows a
-        # summary instead of a path; editing the entry drops the selection.
-        self.selected_files: list[Path] = []
-        self.files_summary = ""
-
-    def _build_options(self):
-        card = self._card(row=2)
-        card.grid_columnconfigure(0, weight=0)
-        card.grid_columnconfigure(2, weight=1)
-
-        self._label(card, "Model").grid(row=0, column=0, columnspan=3, sticky="w",
-                                        padx=20, pady=(16, 8))
-        self.model_menu = ctk.CTkOptionMenu(
-            card, values=[m.label for m in MODELS], command=self._on_model_change,
-            height=40, corner_radius=10, dynamic_resizing=False, anchor="w",
-            font=self.fonts["body"], dropdown_font=self.fonts["body"],
-            fg_color=FIELD, button_color=FIELD, button_hover_color="#25252D",
-            text_color=TEXT, text_color_disabled=SUBTLE,
-            dropdown_fg_color=SURFACE, dropdown_hover_color=FIELD, dropdown_text_color=TEXT)
-        self.model_menu.set(self.model_label)
-        self.model_menu.grid(row=1, column=0, columnspan=3, sticky="ew", padx=20)
-        self.model_desc = self._label(card, MODELS_BY_LABEL[self.model_label].note,
-                                      font="small", color=MUTED)
-        self.model_desc.grid(row=2, column=0, columnspan=3, sticky="w", padx=20, pady=(8, 14))
-
-        tk.Frame(card, height=1, bg=BORDER, highlightthickness=0).grid(row=3, column=0, columnspan=3,
-                                                           sticky="ew", padx=20)
-
-        # Format, quality and output folder share one row.
-        self._label(card, "Format").grid(row=4, column=0, sticky="w", padx=20, pady=(16, 8))
-        self._label(card, "Quality").grid(row=4, column=1, sticky="w", padx=(20, 0), pady=(16, 8))
-        self._label(card, "Save to").grid(row=4, column=2, sticky="w", padx=(20, 20), pady=(16, 8))
-
-        self.format_seg = self._segmented(card, OUTPUT_FORMATS, self.output_format,
-                                          self._on_format_change)
-        self.format_seg.configure(width=130)
-        self.format_seg.grid(row=5, column=0, sticky="w", padx=20, pady=(0, 20))
-
-        # "Faster" halves BS-Roformer's overlapping passes: about 2x faster,
-        # with a small loss of quality.
-        self.quality_seg = self._segmented(card, QUALITY_MODES, self.quality, self._on_quality_change)
-        self.quality_seg.configure(width=150)
-        self.quality_seg.grid(row=5, column=1, sticky="w", padx=(20, 0), pady=(0, 20))
-
-        folder = ctk.CTkFrame(card, fg_color=FIELD, corner_radius=10, height=38,
-                              border_width=1, border_color=BORDER)
-        folder.grid(row=5, column=2, sticky="ew", padx=(20, 20), pady=(0, 20))
-        folder.grid_columnconfigure(0, weight=1)
-        self.output_label = self._label(folder, short_path(self.output_dir), font="small", color=TEXT)
-        self.output_label.grid(row=0, column=0, sticky="ew", padx=(12, 4), pady=6)
-        self.change_button = ctk.CTkButton(
-            folder, text="Change", width=64, height=28, corner_radius=8,
-            fg_color="transparent", hover_color="#25252D", text_color=ACCENT,
-            font=self.fonts["label"], command=self._choose_output_dir)
-        self.change_button.grid(row=0, column=1, padx=(0, 5), pady=4)
-
-    def _build_extract_button(self):
-        self.start_button = ctk.CTkButton(
-            self.body, text="Extract stems", height=52, corner_radius=12,
-            font=self.fonts["button"], fg_color=ACCENT, hover_color=ACCENT_HOVER,
-            text_color=ON_ACCENT, text_color_disabled=MUTED, command=self.start_extraction)
-        self.start_button.grid(row=3, column=0, sticky="ew", pady=(2, 14))
-
-    def _build_progress(self):
-        card = self._card(row=4)
-        card.grid_columnconfigure(0, weight=1)
-
-        steps = ctk.CTkFrame(card, fg_color="transparent")
-        steps.grid(row=0, column=0, columnspan=2, sticky="w", padx=20, pady=(16, 10))
-        self.step_widgets = {}
-        for i, (key, name) in enumerate(STAGES):
-            if i:
-                tk.Frame(steps, width=28, height=1, bg=BORDER, highlightthickness=0).pack(side="left", padx=10)
-            dot = ctk.CTkLabel(steps, text="●", text_color=SUBTLE, font=self.fonts["small"])
-            dot.pack(side="left", padx=(0, 6))
-            label = self._label(steps, name, font="small", color=SUBTLE)
-            label.pack(side="left")
-            self.step_widgets[key] = (dot, label)
-
-        self.status_label = self._label(card, "Ready", font="body", color=TEXT)
-        self.status_label.grid(row=1, column=0, sticky="w", padx=20)
-        self.elapsed_label = self._label(card, "", font="small", color=MUTED, justify="right")
-        self.elapsed_label.grid(row=1, column=1, sticky="e", padx=20)
-
-        self.progress_bar = ctk.CTkProgressBar(card, height=6, corner_radius=3,
-                                               fg_color=FIELD, progress_color=ACCENT)
-        self.progress_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=20, pady=(10, 20))
-        self._set_progress(0)
-
-    def _build_results(self):
-        # Filled in when a job finishes; hidden until then.
-        self.results_card = self._card(row=5)
-        self.results_card.grid_remove()
-
-    def _build_footer(self):
-        footer = ctk.CTkFrame(self.body, fg_color="transparent")
-        footer.grid(row=6, column=0, sticky="ew")
-        footer.grid_columnconfigure(1, weight=1)
-        link = dict(fg_color="transparent", hover_color=SURFACE, text_color=MUTED,
-                    font=self.fonts["small"], height=30, corner_radius=8)
-        self.details_button = ctk.CTkButton(footer, text="Show details", width=110,
-                                            command=self._toggle_details, **link)
-        self.details_button.grid(row=0, column=0, sticky="w")
-        ctk.CTkButton(footer, text="Open output folder", width=140,
-                      command=lambda: self._safe_open(self.output_dir, folder=True),
-                      **link).grid(row=0, column=2, sticky="e")
-
-        # Technical log, hidden by default to keep the window clean.
-        self.log_box = ctk.CTkTextbox(self.body, font=self.fonts["mono"], fg_color=SURFACE,
-                                      border_width=1, border_color=BORDER, corner_radius=12,
-                                      text_color=MUTED, wrap="word")
-        self.log_box.configure(state="disabled")
-
-    # ---- UI actions --------------------------------------------------------
-
-    def _set_source_text(self, text: str):
-        self.url_entry.delete(0, "end")
-        self.url_entry.insert(0, text)
-
-    def _paste_url(self):
+    def preload_engine(self):
+        """Import the AI engine in the background and report what it runs on."""
         try:
-            text = self.clipboard_get().strip()
-        except Exception:
-            return  # empty or non-text clipboard
-        self.selected_files = []
-        self._set_source_text(text)
-
-    def _browse_files(self):
-        start = self.settings.get("input_dir") or str(Path.home() / "Music")
-        chosen = filedialog.askopenfilenames(
-            title="Choose audio files to separate", initialdir=start,
-            filetypes=[("Audio and video files", AUDIO_FILE_TYPES), ("All files", "*.*")])
-        if not chosen:
-            return
-        self.selected_files = [Path(p) for p in chosen]
-        self.settings["input_dir"] = str(self.selected_files[0].parent)
-        save_settings(self.settings)
-        if len(self.selected_files) == 1:
-            self.files_summary = str(self.selected_files[0])
-        else:
-            names = ", ".join(p.name for p in self.selected_files[:2])
-            more = "…" if len(self.selected_files) > 2 else ""
-            self.files_summary = f"{len(self.selected_files)} files: {names}{more}"
-        self._set_source_text(self.files_summary)
-        self._set_status(f"{len(self.selected_files)} file{'s' if len(self.selected_files) > 1 else ''} "
-                         "ready. Press Extract stems.")
-
-    def _current_sources(self) -> list[str]:
-        """What to process: the browsed files, or whatever is typed or pasted."""
-        text = self.url_entry.get().strip()
-        if self.selected_files and text == self.files_summary:
-            return [str(p) for p in self.selected_files]
-        self.selected_files = []
-        # Windows "Copy as path" wraps paths in quotes.
-        text = text.strip('"').strip("'")
-        return [text] if text else []
-
-    def _on_model_change(self, label):
-        self.model_label = label
-        self.model_desc.configure(text=MODELS_BY_LABEL[label].note)
-        self._remember()
-
-    def _on_quality_change(self, quality):
-        self.quality = quality
-        self._remember()
-
-    def _on_format_change(self, fmt):
-        self.output_format = fmt
-        self._remember()
-
-    def _choose_output_dir(self):
-        chosen = filedialog.askdirectory(initialdir=str(self.output_dir),
-                                         title="Choose where to save the stems")
-        if chosen:
-            self.output_dir = Path(chosen)
-            self.output_label.configure(text=short_path(self.output_dir))
-            self.log(f"Output folder set to: {self.output_dir}")
-            self._remember()
-
-    def _remember(self):
-        self.settings.update(model=self.model_label, format=self.output_format,
-                             quality=self.quality, output_dir=str(self.output_dir))
-        save_settings(self.settings)
-
-    def _toggle_details(self):
-        self.details_visible = not self.details_visible
-        if self.details_visible:
-            self.log_box.grid(row=7, column=0, sticky="nsew", pady=(8, 0))
-            self.details_button.configure(text="Hide details")
-            self._fit_height()
-        else:
-            self.log_box.grid_remove()
-            self.details_button.configure(text="Show details")
-
-    def _safe_open(self, path: Path, folder=False, reveal=False):
-        try:
-            if folder:
-                path.mkdir(parents=True, exist_ok=True)
-            (reveal_in_file_manager if reveal else open_path)(path)
+            device = detect_device()
         except Exception as exc:
-            self.log(f"Could not open {path}: {exc}")
+            self.engine_error = f"{type(exc).__name__}: {exc}"
+            self.emit("device", kind="error", name="Engine error", detail=str(exc))
+            self.emit("log", text=f"AI engine failed to load: {self.engine_error}")
+            return
+        self._device = device
+        self.emit("log", text=f"AI engine ready on: {device}")
+        if device != "CPU":
+            self.emit("device", kind="gpu", name=device)
+        elif is_nvidia_edition():
+            detail = ("No usable NVIDIA GPU found (none installed, or the driver is out of date). "
+                      "This edition only accelerates NVIDIA GPUs, so it's running on the CPU, which is much slower.")
+            self.emit("device", kind="nonvidia", name="No NVIDIA GPU", detail=detail)
+            self.emit("log", text=detail)
+        else:
+            self.emit("device", kind="cpu", name="CPU only")
 
-    def _set_running(self, running: bool):
-        state = "disabled" if running else "normal"
-        for widget in (self.url_entry, self.paste_button, self.browse_button, self.model_menu,
-                       self.format_seg, self.quality_seg, self.change_button):
-            widget.configure(state=state)
-        self.start_button.configure(
-            state=state, text="Extracting…" if running else "Extract stems",
-            fg_color=FIELD if running else ACCENT)
+    # Settings -----------------------------------------------------------------
 
-    def start_extraction(self):
-        if self.worker and self.worker.is_alive():
-            return  # already running (e.g. Enter pressed twice)
+    def get_state(self) -> dict:
+        return {
+            "version": APP_VERSION,
+            "models": [{"name": m.name, "best_for": m.best_for, "filename": m.filename, "size": m.size}
+                       for m in MODELS],
+            "settings": dict(self._settings),
+            "ffmpeg": ffmpeg_available(),
+        }
 
-        sources = self._current_sources()
+    def save_settings(self, change: dict) -> dict:
+        allowed = {"model": MODELS_BY_FILE, "quality": QUALITY_MODES, "format": OUTPUT_FORMATS}
+        for key, value in (change or {}).items():
+            if key in allowed and value in allowed[key]:
+                self._settings[key] = value
+            elif key == "output_dir" and value:
+                self._settings[key] = str(value)
+        save_settings(dict(self._settings))
+        return dict(self._settings)
+
+    def choose_folder(self):
+        result = self.window.create_file_dialog(_dialog("FOLDER"), directory=self._settings["output_dir"])
+        return result[0] if result else None
+
+    def browse_files(self) -> list[str]:
+        patterns = ";".join(f"*.{e}" for e in AUDIO_EXTENSIONS)
+        start = load_settings().get("input_dir") or str(Path.home() / "Music")
+        result = self.window.create_file_dialog(
+            _dialog("OPEN"), allow_multiple=True, directory=start,
+            file_types=(f"Audio and video files ({patterns})", "All files (*.*)"))
+        paths = [str(p) for p in (result or [])]
+        if paths:
+            settings = load_settings()
+            settings["input_dir"] = str(Path(paths[0]).parent)
+            save_settings({**settings, **self._settings})
+        return paths
+
+    # Files ----------------------------------------------------------------------
+
+    def open_path(self, path: str):
+        try:
+            open_path(Path(path))
+        except Exception as exc:
+            self.emit("log", text=f"Could not open {path}: {exc}")
+
+    def reveal(self, path: str):
+        try:
+            reveal_in_file_manager(Path(path))
+        except Exception as exc:
+            self.emit("log", text=f"Could not show {path}: {exc}")
+
+    def open_output(self):
+        folder = Path(self._settings["output_dir"])
+        folder.mkdir(parents=True, exist_ok=True)
+        self.open_path(str(folder))
+
+    def on_drop(self, paths: list[str]):
+        """Files dropped onto the window (see main())."""
+        files = [p for p in paths if p and Path(p).is_file()]
+        if files:
+            self.emit("dropped", paths=files)
+
+    # Running a job -----------------------------------------------------------------
+
+    def start(self, sources: list[str]) -> dict:
+        if self._worker and self._worker.is_alive():
+            return {"ok": False, "error": "Already working on something."}
+        sources = [s.strip().strip('"').strip("'") for s in (sources or []) if s and s.strip()]
         if not sources:
-            self._set_status("Paste a YouTube link or browse for audio files first.", DANGER)
-            self.url_entry.focus_set()
-            return
-        single = sources[0]
-        if len(sources) == 1 and not looks_like_url(single) and not Path(single).is_file():
-            self._set_status("That isn't a YouTube link or an audio file that exists.", DANGER)
-            return
+            return {"ok": False, "error": "Paste a YouTube link, or browse for audio files."}
+        if len(sources) == 1 and not looks_like_url(sources[0]) and not Path(sources[0]).is_file():
+            return {"ok": False, "error": "That isn't a YouTube link or an audio file that exists."}
+        s = self._settings
+        job = Job(sources=sources, model_file=s["model"], output_format=s["format"],
+                  output_dir=Path(s["output_dir"]), faster=s["quality"] == "Faster")
+        self._cancel.clear()
+        self.emit("log", text="-" * 50)
+        self.emit("log", text=f"Starting {len(sources)} item(s) [{job.model_file}, {job.output_format}, {s['quality']}]")
+        self._worker = threading.Thread(target=self._run, args=(job,), daemon=True)
+        self._worker.start()
+        return {"ok": True}
 
-        job = Job(sources=sources, model_file=MODELS_BY_LABEL[self.model_label].filename,
-                  output_format=self.output_format, output_dir=self.output_dir,
-                  faster=self.quality == "Faster")
+    def cancel(self):
+        self._cancel.set()
+        self.emit("log", text="Stopping after the current step...")
 
-        self._set_running(True)
-        self.results_card.grid_remove()
-        self._set_progress(0)
-        self._set_stage(None)
-        self._set_status("Fetching video info…" if looks_like_url(single) else "Starting…")
-        self.job_started_at = time.monotonic()
-        self._tick()
-        self.log("-" * 60)
-        self.log(f"Starting {len(sources)} item(s)  [{job.model_file}, {job.output_format}]")
-
-        self.worker = threading.Thread(target=self._worker_main, args=(job,), daemon=True)
-        self.worker.start()
-
-    # ---- Worker threads (no widget access in here!) -----------------------
-
-    def _preload_engine(self):
-        try:
-            self.events.put(("engine", (True, detect_device())))
-        except Exception as exc:
-            self.events.put(("engine", (False, f"{type(exc).__name__}: {exc}")))
-
-    def _worker_main(self, job: Job):
+    def _run(self, job: Job):
         pipeline = ExtractionPipeline(
-            log=lambda msg: self.events.put(("log", msg)),
-            progress=lambda value: self.events.put(("progress", value)),
-            stage=lambda name, detail: self.events.put(("stage", (name, detail))),
+            log=lambda text: self.emit("log", text=text),
+            progress=lambda value: self.emit("progress", value=value),
+            stage=lambda name, detail: self.emit("stage", name=name, detail=detail),
+            title=lambda text: self.emit("title", text=text),
+            cancel_event=self._cancel,
         )
+        started = time.monotonic()
         try:
-            saved = pipeline.run(job)
+            songs, failures = pipeline.run(job)
+        except Cancelled:
+            self.emit("cancelled")
+            return
         except PipelineError as exc:
-            self.events.put(("error", str(exc)))
+            self.emit("error", message=str(exc))
+            return
         except Exception as exc:  # anything unexpected: show it, keep the app alive
             traceback.print_exc()
-            self.events.put(("error", f"Unexpected error: {type(exc).__name__}: {exc}"))
-        else:
-            self.events.put(("done", saved))
+            self.emit("error", message=f"Unexpected error: {type(exc).__name__}: {exc}")
+            return
+        seconds = time.monotonic() - started
+        model = MODELS_BY_FILE.get(job.model_file)
+        now = datetime.now()
+        entries = [{"id": uuid.uuid4().hex, "title": song["title"], "date": now.isoformat(timespec="seconds"),
+                    "model": model.name if model else job.model_file, "format": job.output_format,
+                    "stems": [str(p) for p in song["stems"]]} for song in songs]
+        add_to_history(entries)
+        for failure in failures:
+            self.emit("log", text=f"FAILED: {failure}")
+        self.emit("done", songs=[self._song_view(e) for e in entries], failures=failures,
+                  seconds=round(seconds, 1), device=self._device if self._device != "CPU" else "")
 
-    # ---- Main-thread event pump -------------------------------------------
+    def _song_view(self, entry: dict) -> dict | None:
+        """A history entry as the results screen shows it (with waveforms and playable URLs)."""
+        stems = []
+        order = {"Acapella": 0, "Instrumental": 1}
+        for p in map(Path, entry["stems"]):
+            if not p.exists():
+                continue
+            peaks, duration = waveform(p)
+            stems.append({"kind": STEM_KINDS.get(p.parent.name, "Stem"), "path": str(p), "name": p.name,
+                          "size": human_size(p), "url": self._server.audio_url(p),
+                          "peaks": peaks, "duration": duration})
+        if not stems:
+            return None
+        stems.sort(key=lambda st: order.get(st["kind"], 2))
+        length = max(st["duration"] for st in stems)
+        meta = " · ".join(filter(None, [
+            f"{int(length) // 60}:{int(length) % 60:02d}" if length else "",
+            entry.get("model"), entry.get("format"), "saved to " + _short_folder(Path(stems[0]["path"]).parent.parent)]))
+        return {"title": entry["title"], "meta": meta, "stems": stems}
 
-    def _drain_events(self):
+    # History -----------------------------------------------------------------------
+
+    def history(self) -> list[dict]:
+        items = []
+        for e in load_history():
+            try:
+                when = datetime.fromisoformat(e["date"]).strftime("%d %b %Y, %H:%M")
+            except Exception:
+                when = ""
+            items.append({"id": e.get("id"), "title": e.get("title", "?"), "when": when, "model": e.get("model", "")})
+        return items
+
+    def history_item(self, entry_id: str):
+        for e in load_history():
+            if e.get("id") == entry_id:
+                return self._song_view(e)
+        return None
+
+
+def _short_folder(folder: Path) -> str:
+    """The last two parts of a folder path, e.g. Music\\ORemove."""
+    parts = folder.parts[-2:]
+    return os.sep.join(parts) if parts else str(folder)
+
+
+def copy_bundled_models():
+    """On macOS the app bundle is read-only: copy the bundled model to the data folder."""
+    bundled = BUNDLE_DIR / "models"
+    if bundled.resolve() == MODEL_DIR.resolve() or not bundled.is_dir():
+        return
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    for f in bundled.iterdir():
+        target = MODEL_DIR / f.name
+        if f.is_file() and not target.exists():
+            try:
+                shutil.copyfile(f, target)
+            except OSError:
+                pass
+
+
+def show_fatal_error(message: str):
+    """Show an error before (or instead of) the main window."""
+    if sys.platform.startswith("win"):
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, message, APP_TITLE, 0x10)
+    elif MACOS:
+        subprocess.run(["osascript", "-e", f'display alert "{APP_TITLE}" message {json.dumps(message)} as critical'])
+    else:
+        print(message, file=sys.stderr)
+
+
+def run_window(smoke_test_report: Path | None = None) -> int:
+    """
+    Open the main window. With smoke_test_report, close it again as soon as the
+    page has loaded and talked to Python, and write a report (used by the build
+    to check the packaged interface works).
+    """
+    try:
+        import webview
+        from webview.dom import DOMEventHandler
+    except Exception as exc:
+        show_fatal_error(f"The interface could not start: {exc}")
+        return 1
+
+    copy_bundled_models()
+    server = LocalServer()
+    api = Api(server)
+    window = webview.create_window(f"{APP_TITLE} - {APP_TAGLINE}", server.url, js_api=api,
+                                   width=1000, height=720, min_size=(760, 620), background_color="#111114")
+    api.window = window
+
+    def on_drop(event):
+        files = (event.get("dataTransfer") or {}).get("files") or []
+        api.on_drop([f.get("pywebviewFullPath") for f in files])
+
+    def on_loaded():
         try:
-            while True:
-                kind, payload = self.events.get_nowait()
-                if kind == "log":
-                    self.log(payload)
-                elif kind == "progress":
-                    self._set_progress(payload)
-                elif kind == "stage":
-                    name, detail = payload
-                    self._set_stage(name)
-                    self._set_status(f"{detail}…")
-                elif kind == "engine":
-                    self._on_engine_ready(*payload)
-                elif kind == "error":
-                    self._finish()
-                    self._set_progress(0)
-                    self._set_status(payload, DANGER)
-                    self.log(f"ERROR: {payload}")
-                elif kind == "done":
-                    saved, failures = payload
-                    self._finish()
-                    self._set_progress(1.0)
-                    self._set_stage("done")
-                    if failures:
-                        self._set_status(f"Done, but {len(failures)} file(s) failed. "
-                                         "See Show details.", "#F5A524")
-                        for failure in failures:
-                            self.log(f"FAILED: {failure}")
-                    else:
-                        self._set_status("Done. Your stems are ready.", ACCENT)
-                    for path in saved:
-                        self.log(f"Saved: {path}")
-                    self._show_results(saved)
-        except queue.Empty:
-            pass
-        self.after(100, self._drain_events)
+            window.dom.document.events.dragover += DOMEventHandler(lambda _e: None, True, True)
+            window.dom.document.events.drop += DOMEventHandler(on_drop, True, True)
+        except Exception as exc:
+            api.emit("log", text=f"Drag and drop unavailable: {exc}")
+        threading.Thread(target=api.preload_engine, daemon=True).start()
 
-    def _on_engine_ready(self, ok: bool, info: str):
-        if not ok:
-            self.device_dot.configure(text_color=DANGER)
-            self.device_label.configure(text="Engine error")
-            self.log(f"AI engine failed to load: {info}")
-            return
-        on_gpu = info != "CPU"
-        self.device_dot.configure(text_color=ACCENT if on_gpu else "#F5A524")
-        self.log(f"AI engine ready on: {info}")
-        if on_gpu:
-            self.device_label.configure(text=info, text_color=TEXT)
-        elif is_nvidia_edition():
-            # GPU acceleration in this edition works only with NVIDIA cards.
-            self.device_label.configure(text="No NVIDIA GPU", text_color=TEXT)
-            message = ("No usable NVIDIA GPU found (none installed, or the driver is out of date). "
-                       "This edition only accelerates NVIDIA GPUs; running on the CPU, which is much slower.")
-            self.log(message)
-            if not (self.worker and self.worker.is_alive()):
-                self._set_status(message, "#F5A524")
-                self.status_label.configure(wraplength=640, justify="left")
+    window.events.loaded += on_loaded
+
+    def smoke_test():
+        started = time.monotonic()
+        ok = api.ready_event.wait(90)
+        lines = [f"page loaded and called Python: {ok}", f"version: {APP_VERSION}", f"url: {server.url}"]
+        if ok:
+            try:
+                lines.append("title: " + str(window.evaluate_js("document.querySelector('.hero-title').textContent")))
+            except Exception as exc:
+                lines.append(f"evaluate_js failed: {exc}")
+                ok = False
+            # The AI engine loads in the background once the page is up.
+            for _ in range(240):
+                if api._device or api.engine_error:
+                    break
+                time.sleep(0.5)
+            lines.append(f"engine: {api._device or api.engine_error or 'did not load in time'}")
+            ok = ok and bool(api._device)
+            # Stay open long enough for the build to take a screenshot (at ~40 s).
+            time.sleep(max(0.0, 55 - (time.monotonic() - started)))
+        smoke_test_report.write_text("\n".join(lines), encoding="utf-8")
+        result["ok"] = ok
+        window.destroy()
+
+    result = {"ok": True}
+    try:
+        # On Windows, insist on Edge WebView2 (a missing runtime then gives the
+        # clear message below instead of a broken fallback window).
+        gui = "edgechromium" if sys.platform.startswith("win") else None
+        webview.start(smoke_test if smoke_test_report else None, gui=gui, debug=False)
+    except Exception as exc:
+        if sys.platform.startswith("win"):
+            show_fatal_error(
+                f"The interface could not start ({exc}).\n\nORemove needs the Microsoft Edge WebView2 Runtime. "
+                "Install it from https://go.microsoft.com/fwlink/p/?LinkId=2124703 and start ORemove again.")
         else:
-            self.device_label.configure(text="CPU only", text_color=TEXT)
-
-    def _finish(self):
-        self._set_running(False)
-        self.job_started_at = None
-
-    def _tick(self):
-        """Update the elapsed-time label once a second while a job runs."""
-        if self.job_started_at is None:
-            return
-        secs = int(time.monotonic() - self.job_started_at)
-        self.elapsed_label.configure(text=f"{secs // 60}:{secs % 60:02d}")
-        self.after(1000, self._tick)
-
-    def _set_status(self, text: str, color: str = TEXT):
-        self.status_label.configure(text=text, text_color=color)
-
-    def _set_stage(self, current: str | None):
-        """Light up the step indicator: finished steps green, current white."""
-        keys = [k for k, _ in STAGES]
-        reached = len(keys) if current == "done" else (keys.index(current) if current in keys else -1)
-        for i, key in enumerate(keys):
-            dot, label = self.step_widgets[key]
-            if i < reached:
-                dot.configure(text_color=ACCENT)
-                label.configure(text_color=TEXT)
-            elif i == reached:
-                dot.configure(text_color=TEXT)
-                label.configure(text_color=TEXT)
-            else:
-                dot.configure(text_color=SUBTLE)
-                label.configure(text_color=SUBTLE)
-
-    def _set_progress(self, value):
-        """value in 0..1, or None for 'busy, unknown amount' (animated bar)."""
-        if value is None:
-            if not self.progress_indeterminate:
-                self.progress_bar.configure(mode="indeterminate")
-                self.progress_bar.start()
-                self.progress_indeterminate = True
-            return
-        if self.progress_indeterminate:
-            self.progress_bar.stop()
-            self.progress_bar.configure(mode="determinate")
-            self.progress_indeterminate = False
-        # At 0 the bar would still draw a small green dot; hide it.
-        self.progress_bar.configure(progress_color=ACCENT if value > 0 else FIELD)
-        self.progress_bar.set(value)
-
-    def _fit_height(self):
-        """Grow the window (up to the screen size) when results or details need room."""
-        self.update_idletasks()
-        needed = self.winfo_reqheight()
-        limit = self.winfo_screenheight() - 80
-        if self.winfo_height() < needed:
-            self.geometry(f"{self.winfo_width()}x{min(needed, limit)}")
-
-    def _show_results(self, paths: list[Path]):
-        """One row per song: its name, a play button per stem, and Show in folder."""
-        card = self.results_card
-        for child in card.winfo_children():
-            child.destroy()
-        card.grid_columnconfigure(0, weight=1)
-        self._label(card, "Your stems").grid(row=0, column=0, columnspan=4, sticky="w",
-                                             padx=20, pady=(16, 6))
-
-        kinds = {"acapellas": "Acapella", "instrumentals": "Instrumental"}
-        songs: dict[str, dict[str, Path]] = {}
-        for path in paths:
-            song = path.stem.rsplit(" (", 1)[0]  # "Title (Acapella)" -> "Title"
-            songs.setdefault(song, {})[kinds.get(path.parent.name, "Stem")] = path
-
-        limit = 3  # a long batch would push the window off the screen
-        shown = list(songs.items())[:limit]
-        hidden = len(songs) - len(shown)
-        for row, (song, stems) in enumerate(shown, start=1):
-            pady = (4, 18 if row == len(shown) and hidden <= 0 else 4)
-            self._label(card, song, font="label", color=TEXT).grid(
-                row=row, column=0, sticky="ew", padx=(20, 8), pady=pady)
-            col = 1
-            for kind in ("Acapella", "Instrumental", "Stem"):
-                if kind in stems:
-                    self._ghost_button(card, f"▶  {kind}", lambda p=stems[kind]: self._safe_open(p),
-                                       width=118 if kind == "Instrumental" else 100,
-                                       color=ACCENT).grid(row=row, column=col, padx=(0, 6), pady=pady)
-                    col += 1
-            first = next(iter(stems.values()))
-            self._ghost_button(card, "Show", lambda p=first: self._safe_open(p, reveal=True),
-                               width=64).grid(row=row, column=col, padx=(0, 20), pady=pady)
-        if hidden > 0:
-            self._label(card, f"+ {hidden} more song{'s' if hidden > 1 else ''} in the output folder",
-                        font="small").grid(row=len(shown) + 1, column=0, columnspan=5,
-                                           sticky="w", padx=20, pady=(6, 18))
-        card.grid()
-        self._fit_height()
-
-    def log(self, message: str):
-        stamp = datetime.now().strftime("%H:%M:%S")
-        self.log_box.configure(state="normal")
-        self.log_box.insert("end", f"[{stamp}] {message}\n")
-        self.log_box.see("end")
-        self.log_box.configure(state="disabled")
+            show_fatal_error(f"The interface could not start: {exc}")
+        return 1
+    return 0 if result["ok"] else 1
 
 
 def self_test(report_path: Path, model_files: list[str] | None) -> int:
@@ -1306,11 +1223,13 @@ def self_test(report_path: Path, model_files: list[str] | None) -> int:
 
 
 def main():
-    # python app.py --self-test report.txt [model_file ...]
+    # python app.py --self-test report.txt [model_file ...]   engine check, no window
+    # python app.py --ui-smoke-test report.txt                 open and close the window
     if len(sys.argv) >= 3 and sys.argv[1] == "--self-test":
         sys.exit(self_test(Path(sys.argv[2]), sys.argv[3:] or None))
-    app = ORemoveApp()
-    app.mainloop()
+    if len(sys.argv) >= 3 and sys.argv[1] == "--ui-smoke-test":
+        sys.exit(run_window(Path(sys.argv[2])))
+    sys.exit(run_window())
 
 
 if __name__ == "__main__":

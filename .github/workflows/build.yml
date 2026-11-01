@@ -1,0 +1,258 @@
+# Builds ORemove in three editions, tests each built app, and publishes them
+# to a GitHub Release:
+#   cpu  - Windows portable zip, runs on any PC
+#   cuda - Windows installer for NVIDIA GPUs, split into parts under 2 GB
+#   mac  - macOS disk image for Apple Silicon Macs (uses the Apple GPU)
+# Every edition runs the engine self-test (all models) from source and from
+# the packaged app, and opens the real window once (with a screenshot saved
+# as a build artifact).
+name: Build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version tag to create (leave empty to only build)"
+        default: "v1.5.0"
+      editions:
+        description: 'Editions to build, as a JSON list, e.g. ["cpu","cuda","mac"] or ["mac"]'
+        default: '["cpu","cuda","mac"]'
+
+permissions:
+  contents: write  # needed to create the release
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: ${{ fromJSON(inputs.editions || '["cpu","cuda","mac"]') }}
+    runs-on: ${{ matrix.flavor == 'mac' && 'macos-14' || 'windows-latest' }}
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+    env:
+      APP_NAME: ORemove
+      VERSION: ${{ inputs.version || github.ref_name }}
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # torchvision (used by onnx2torch to load models) must come from the
+          # same index as torch so its compiled operators match.
+          case "${{ matrix.flavor }}" in
+            cuda) pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126 ;;  # GTX 900 to RTX 40 series
+            cpu)  pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu ;;
+            mac)  pip install torch torchvision ;;  # includes Apple GPU (MPS) support
+          esac
+          pip install -r requirements.txt
+          pip install pyinstaller pip-licenses pillow
+
+      - name: Make the app icon
+        run: python packaging/make_icon.py
+
+      # Windows: LGPL build. macOS: release build for Apple Silicon (GPL v3).
+      - name: Download FFmpeg
+        run: |
+          mkdir -p ffmpeg-bin
+          if [ "${{ matrix.flavor }}" = "mac" ]; then
+            for f in ffmpeg ffprobe; do
+              curl -sSfL -o "$f.zip" "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/$f.zip"
+              unzip -o -q "$f.zip" -d ffmpeg-bin
+            done
+            chmod +x ffmpeg-bin/ffmpeg ffmpeg-bin/ffprobe
+            echo "macOS FFmpeg from https://ffmpeg.martin-riedl.de (GPL v3)." > ffmpeg-bin/FFMPEG-SOURCE.txt
+            EXE=""
+          else
+            curl -sSfL -o ffmpeg.zip "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip"
+            unzip -o -q ffmpeg.zip -d ffmpeg
+            bin=$(dirname "$(find ffmpeg -name ffmpeg.exe | head -1)")
+            cp "$bin/ffmpeg.exe" "$bin/ffprobe.exe" ffmpeg-bin/
+            cp "$(find ffmpeg -maxdepth 2 -name 'LICENSE*' | head -1)" ffmpeg-bin/FFMPEG-COPYING.txt || true
+            EXE=".exe"
+          fi
+          # MP3 export needs the LAME encoder; fail the build if this FFmpeg lacks it.
+          ffmpeg-bin/ffmpeg$EXE -hide_banner -encoders > encoders.txt
+          grep -q libmp3lame encoders.txt || { echo "FFmpeg has no MP3 encoder"; exit 1; }
+          ffmpeg-bin/ffmpeg$EXE -hide_banner -version > version-full.txt
+          sed -n 1p version-full.txt > ffmpeg-version.txt
+          cat ffmpeg-version.txt
+
+      # Same check as the packaged-app self-test below, but from source: if this
+      # fails, the problem is a dependency, not the packaging. Runs every model
+      # (on the CPU: the build machines have no GPU) and downloads them into models/.
+      - name: Self-test from source
+        run: |
+          export PATH="$PWD/ffmpeg-bin:$PATH"
+          python app.py --self-test source-test.txt || { cat source-test.txt; exit 1; }
+          cat source-test.txt
+
+      - name: Build with PyInstaller
+        run: |
+          common=(--noconfirm --windowed --name "$APP_NAME"
+            --add-data "ui:ui"
+            --collect-all webview
+            --collect-all audio_separator --copy-metadata audio-separator
+            --collect-all onnxruntime --collect-all torchvision --collect-all samplerate
+            --collect-data librosa --collect-data resampy)
+          if [ "${{ matrix.flavor }}" = "mac" ]; then
+            # The app bundle is read-only, so FFmpeg and the fast model go inside it;
+            # the app copies the model to ~/Library/Application Support/ORemove.
+            pyinstaller "${common[@]}" --icon packaging/icon.icns \
+              --osx-bundle-identifier com.newmoneymadeit.oremove \
+              --add-binary "ffmpeg-bin/ffmpeg:." --add-binary "ffmpeg-bin/ffprobe:." \
+              --add-data "models/UVR-MDX-NET-Inst_HQ_3.onnx:models" app.py
+          else
+            pyinstaller "${common[@]}" --icon packaging/icon.ico app.py
+          fi
+
+      - name: Add FFmpeg, models, docs and licenses
+        run: |
+          if [ "${{ matrix.flavor }}" = "mac" ]; then
+            docs="dist/docs"; mkdir -p "$docs"
+          else
+            docs="dist/$APP_NAME"
+            cp ffmpeg-bin/ffmpeg.exe ffmpeg-bin/ffprobe.exe ffmpeg-bin/FFMPEG-COPYING.txt "$docs/" 2>/dev/null || true
+            cp -R models "$docs/"  # all models, so the next step doesn't re-download them
+          fi
+          cp README.md INSTALL.md LICENSE THIRD-PARTY-NOTICES.md "$docs/"
+          # Full license text of every bundled Python package.
+          pip-licenses --with-license-file --no-license-path --with-urls --format=plain-vertical --output-file "$docs/THIRD-PARTY-LICENSES.txt"
+          {
+            if [ "${{ matrix.flavor }}" = "mac" ]; then
+              echo "ORemove bundles FFmpeg (ffmpeg, ffprobe), licensed under the GNU GPL v3."
+              echo "They are unmodified release builds for Apple Silicon from https://ffmpeg.martin-riedl.de"
+              echo "(build scripts: https://git.martin-riedl.de/ffmpeg/build-script)."
+            else
+              echo "ffmpeg.exe and ffprobe.exe are FFmpeg, licensed under the GNU LGPL 2.1 or later"
+              echo "(full text: FFMPEG-COPYING.txt). They are unmodified LGPL builds from"
+              echo "https://github.com/BtbN/FFmpeg-Builds (ffmpeg-master-latest-win64-lgpl)."
+            fi
+            echo
+            echo "Build: $(cat ffmpeg-version.txt)"
+            echo
+            echo "Source code: https://github.com/FFmpeg/FFmpeg and https://ffmpeg.org/download.html"
+          } > "$docs/FFMPEG-LICENSE.txt"
+
+      # Runs the real packaged app on every model: generates a test tone,
+      # separates it, and checks an acapella and an instrumental are written.
+      - name: Self-test the built app
+        run: |
+          if [ "${{ matrix.flavor }}" = "mac" ]; then
+            # Reuse the models already downloaded by the source self-test.
+            data="$HOME/Library/Application Support/ORemove"; mkdir -p "$data"; cp -R models "$data/"
+            exe="dist/$APP_NAME.app/Contents/MacOS/$APP_NAME"
+          else
+            exe="dist/$APP_NAME/$APP_NAME.exe"
+          fi
+          code=0; "$exe" --self-test "$PWD/self-test.txt" || code=$?
+          cat self-test.txt || echo "no report written"
+          [ $code -eq 0 ] || { echo "Self-test failed with exit code $code"; exit 1; }
+          if [ "${{ matrix.flavor }}" != "mac" ]; then
+            # Ship only the small fast model; the large Roformer models download on first use.
+            find "dist/$APP_NAME/models" \( -name '*.ckpt' -o -name '*.yaml' \) -delete
+          fi
+
+      # Opens the real window, waits for the page to load and talk to Python,
+      # takes a screenshot, and closes it again.
+      - name: Open the app window (smoke test)
+        run: |
+          if [ "${{ matrix.flavor }}" = "mac" ]; then
+            exe="dist/$APP_NAME.app/Contents/MacOS/$APP_NAME"
+          else
+            exe="dist/$APP_NAME/$APP_NAME.exe"
+          fi
+          "$exe" --ui-smoke-test "$PWD/ui-test.txt" &
+          pid=$!
+          sleep 40
+          if [ "${{ matrix.flavor }}" = "mac" ]; then
+            screencapture -x "screenshot-${{ matrix.flavor }}.png" || true
+          else
+            powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; \$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; \$i=New-Object System.Drawing.Bitmap \$b.Width,\$b.Height; [System.Drawing.Graphics]::FromImage(\$i).CopyFromScreen(\$b.Location,[System.Drawing.Point]::Empty,\$b.Size); \$i.Save('screenshot-${{ matrix.flavor }}.png')" || true
+          fi
+          for i in $(seq 1 90); do kill -0 $pid 2>/dev/null || break; sleep 2; done
+          if kill -0 $pid 2>/dev/null; then kill $pid; echo "The window did not close by itself"; exit 1; fi
+          code=0; wait $pid || code=$?
+          cat ui-test.txt || echo "no report written"
+          [ $code -eq 0 ] || { echo "Window smoke test failed with exit code $code"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshot-${{ matrix.flavor }}
+          path: screenshot-*.png
+          if-no-files-found: ignore
+
+      - name: Package (Windows portable zip)
+        if: matrix.flavor == 'cpu'
+        run: 7z a -tzip -mx=5 ORemove-Windows-CPU.zip "./dist/$APP_NAME"
+
+      - name: Package (Windows installer)
+        if: matrix.flavor == 'cuda'
+        shell: pwsh
+        run: |
+          # Microsoft's small WebView2 installer, run by setup only if the PC lacks the runtime.
+          Invoke-WebRequest "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile packaging/MicrosoftEdgeWebview2Setup.exe
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          $env:APP_VERSION = "$env:VERSION".TrimStart("v")
+          if (-not $env:APP_VERSION) { $env:APP_VERSION = "0.0.0" }
+          & $iscc packaging/installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+          Get-ChildItem installer-out | Format-Table Name, Length
+
+      # The runner has no NVIDIA GPU, so with message boxes suppressed (they
+      # answer "No") setup must refuse. Then install for real with the check
+      # skipped, to prove the installer works, and uninstall again.
+      - name: Test the installer
+        if: matrix.flavor == 'cuda'
+        shell: pwsh
+        run: |
+          $setup = "installer-out/ORemove-NVIDIA-GPU-Setup.exe"
+          $dir = "$env:RUNNER_TEMP\oremove-install"
+          $quiet = "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$dir"
+          # Never wait forever: a dialog nobody can click would hang the build.
+          function Run-Setup($file, $arguments, $minutes) {
+            $p = Start-Process $file -ArgumentList $arguments -PassThru
+            if (-not $p.WaitForExit($minutes * 60000)) { $p.Kill(); throw "$file timed out (waiting for a dialog?)" }
+            return $p.ExitCode
+          }
+          $code = Run-Setup $setup $quiet 3
+          if (Test-Path "$dir\$env:APP_NAME.exe") { throw "Setup installed on a PC without an NVIDIA GPU" }
+          Write-Host "Refused on a PC without an NVIDIA GPU (exit code $code), as intended"
+          $code = Run-Setup $setup ($quiet + "/SKIPGPUCHECK=1") 20
+          if ($code -ne 0 -or -not (Test-Path "$dir\$env:APP_NAME.exe")) { throw "Install failed (exit code $code)" }
+          Write-Host "Installed OK"
+          Run-Setup "$dir\unins000.exe" @("/VERYSILENT", "/SUPPRESSMSGBOXES") 10 | Out-Null
+
+      - name: Package (macOS disk image)
+        if: matrix.flavor == 'mac'
+        run: |
+          mkdir -p dmg
+          cp -R "dist/$APP_NAME.app" dmg/
+          ln -s /Applications dmg/Applications
+          cp -R dist/docs "dmg/Read me and licenses"
+          hdiutil create -volname "ORemove" -srcfolder dmg -ov -format UDZO ORemove-macOS-AppleSilicon.dmg
+          ls -la ORemove-macOS-AppleSilicon.dmg
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/') || inputs.version != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          # A manual run creates the tag from its version input.
+          tag_name: ${{ env.VERSION }}
+          make_latest: true
+          fail_on_unmatched_files: true
+          files: |
+            ${{ matrix.flavor == 'cpu' && 'ORemove-Windows-CPU.zip' || matrix.flavor == 'cuda' && 'installer-out/*' || 'ORemove-macOS-AppleSilicon.dmg' }}
+          body_path: .github/release-notes.md

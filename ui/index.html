@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ORemove</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app" id="app">
+  <header class="titlebar">
+    <div class="brand">
+      <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#002a10" stroke-width="2.6" stroke-linecap="round"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></svg></div>
+      ORemove
+    </div>
+    <div class="spacer"></div>
+    <div class="pill" id="device" title="What the AI engine runs on"><span class="dot loading"></span><span id="deviceName">Loading engine…</span></div>
+    <button class="icon-btn" id="historyBtn" title="History"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg></button>
+    <button class="icon-btn" id="settingsBtn" title="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+  </header>
+
+  <!-- 1. Start -->
+  <section class="screen active" id="start">
+    <h1 class="hero-title">Isolate any vocal.</h1>
+    <p class="hero-sub">Drop a song, or paste a YouTube link. Studio-grade stems in seconds.</p>
+    <div class="banner error hidden" id="startError"></div>
+    <div class="drop" id="drop">
+      <div class="drop-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M20 15v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-4"/></svg></div>
+      <div class="drop-text">Drop audio files here <span>· MP3, WAV, FLAC, M4A and more</span></div>
+      <div class="or">or</div>
+      <div class="link-row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
+        <input id="source" placeholder="Paste a YouTube link or a file path" autocomplete="off" spellcheck="false">
+        <button class="clear hidden" id="clearSource" title="Clear"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        <button class="btn btn-ghost" id="browse">Browse files</button>
+        <button class="btn btn-primary" id="go">Separate
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+      </div>
+    </div>
+    <div class="chips">
+      <button class="chip" data-open="settings"><b id="chipModel">–</b> <span id="chipBest"></span></button>
+      <button class="chip" data-open="settings">Quality <b id="chipQuality">–</b></button>
+      <button class="chip" data-open="settings">Format <b id="chipFormat">–</b></button>
+    </div>
+  </section>
+
+  <!-- 2. Processing -->
+  <section class="screen" id="processing">
+    <div class="ring-wrap" id="ringWrap">
+      <svg viewBox="0 0 200 200">
+        <defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#30d158"/><stop offset="1" stop-color="#64d2ff"/></linearGradient></defs>
+        <circle class="ring-bg" cx="100" cy="100" r="88" fill="none" stroke-width="10"/>
+        <circle class="ring-fg" id="ring" cx="100" cy="100" r="88" fill="none" stroke-width="10" stroke-dasharray="552.9" stroke-dashoffset="552.9"/>
+      </svg>
+      <div class="ring-center"><div class="ring-pct"><span id="pct">0</span><small>%</small></div><div class="ring-eta" id="elapsed">0:00</div></div>
+    </div>
+    <h2 class="track-title" id="trackTitle">Preparing…</h2>
+    <p class="track-meta" id="stepText">Starting…</p>
+    <div class="steps">
+      <div class="step" data-stage="download"><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg></i>Get audio</div>
+      <div class="line"></div>
+      <div class="step" data-stage="separate"><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg></i>Separate</div>
+      <div class="line"></div>
+      <div class="step" data-stage="save"><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg></i>Save</div>
+    </div>
+    <button class="cancel" id="cancel">Stop</button>
+  </section>
+
+  <!-- 3. Results -->
+  <section class="screen" id="results">
+    <div class="results">
+      <div class="res-head">
+        <div class="res-title">
+          <div class="done-badge" id="doneBadge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg><span id="doneText">Done</span></div>
+          <h2 id="songTitle">–</h2>
+          <p id="songMeta"></p>
+        </div>
+        <button class="btn btn-ghost" id="newSong"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>New song</button>
+      </div>
+      <div class="banner warn hidden" id="failures"></div>
+      <div class="songs hidden" id="songTabs"></div>
+      <div class="cards" id="cards"></div>
+      <div class="res-foot">
+        <div class="ab" id="ab"><span data-kind="Acapella" class="on">Vocals</span><span data-kind="Instrumental">Instrumental</span></div>
+        <span class="or">A/B: switch between stems while playing, in sync</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Sheets -->
+  <div class="scrim" id="scrim"></div>
+  <aside class="sheet" id="settings">
+    <h3>Settings <button class="icon-btn" data-close><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></h3>
+    <div class="label">Model</div>
+    <div id="modelList"></div>
+    <div class="label">Quality</div>
+    <div class="seg" id="qualitySeg"><span data-v="Best">Best</span><span data-v="Faster">Faster</span></div>
+    <div class="hint">Faster is about 2× quicker with BS-Roformer, with a small quality trade-off.</div>
+    <div class="label">Format</div>
+    <div class="seg" id="formatSeg"><span data-v="WAV">WAV · lossless</span><span data-v="MP3">MP3 · 320 kbps</span></div>
+    <div class="label">Save to</div>
+    <div class="folder"><span id="outDir">–</span><a id="changeDir">Change</a></div>
+    <a class="link" id="openOut">Open folder</a>
+    <div class="label">Activity log</div>
+    <pre class="log" id="log"></pre>
+    <div class="about" id="about">ORemove</div>
+  </aside>
+  <aside class="sheet" id="history">
+    <h3>History <button class="icon-btn" data-close><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></h3>
+    <div id="historyList"></div>
+  </aside>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
