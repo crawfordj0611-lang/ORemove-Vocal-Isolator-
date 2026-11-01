@@ -113,7 +113,6 @@ WAV stems take about 10 MB per minute of audio; MP3 at 320 kbps takes about 2.4 
 | YouTube downloads fail for videos that play fine | YouTube changes often. Install the latest release, which includes an updated downloader. |
 | "Age-restricted" or "private" video | These can't be downloaded without signing in, so they're refused. |
 | A file in a batch was skipped | **Show details** lists each skipped file and why (e.g. not a readable audio file). |
-| Windows Media Player can't open a stem | Fixed since v1.0.1. Re-extract stems made with v1.0.0. |
 
 ## Running from source
 

@@ -9,8 +9,8 @@
 #define AppVersion GetEnv("APP_VERSION")
 
 [Setup]
-; Same AppId as the earlier "YT Stem Extractor" releases, so this upgrades them in
-; place (keeping downloaded models and settings) instead of installing twice.
+; Keep this AppId the same in every release, so a new version upgrades the
+; installed one in place (keeping downloaded models and settings).
 AppId={{8F3C2A51-6B7E-4D2B-9C1E-5A4F7D3E2B10}
 AppName={#AppName}
 AppVersion={#AppVersion}
@@ -33,12 +33,6 @@ LZMANumBlockThreads=4
 DiskSpanning=yes
 DiskSliceSize=1900000000
 LicenseFile=LICENSE
-
-[InstallDelete]
-; The program was called "YT Stem Extractor" before; remove its old .exe on upgrade.
-Type: files; Name: "{app}\YT Stem Extractor.exe"
-Type: files; Name: "{autoprograms}\YT Stem Extractor.lnk"
-Type: files; Name: "{autodesktop}\YT Stem Extractor.lnk"
 
 [Messages]
 WelcomeLabel2=This will install [name/ver] on your computer.%n%nTHIS EDITION REQUIRES AN NVIDIA GRAPHICS CARD (GeForce GTX 900 series or newer, with a current driver). AMD and Intel graphics are not supported. For a PC without an NVIDIA card, use the CPU edition (ORemove-Windows-CPU.zip) instead.%n%nIt is recommended that you close all other applications before continuing.

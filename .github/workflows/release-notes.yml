@@ -1,0 +1,24 @@
+# Replaces a published release's description with .github/release-notes.md,
+# without rebuilding. (New builds use that file automatically.)
+name: Update release notes
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to update, e.g. v1.3.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  notes:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update release notes
+        run: gh release edit "${{ inputs.tag }}" --notes-file .github/release-notes.md

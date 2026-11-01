@@ -554,7 +554,7 @@ class ExtractionPipeline:
         self._count = len(job.sources)
 
         # Everything temporary lives here and is deleted at the end, even on errors.
-        with tempfile.TemporaryDirectory(prefix="yt_stem_", ignore_cleanup_errors=True) as tmp:
+        with tempfile.TemporaryDirectory(prefix="oremove_", ignore_cleanup_errors=True) as tmp:
             work_dir = Path(tmp)
             stems_dir = work_dir / "stems"
             stems_dir.mkdir()
@@ -610,7 +610,7 @@ def short_path(path: Path, limit: int = 48) -> str:
     return text if len(text) <= limit else "…" + text[-(limit - 1):]
 
 
-class StemExtractorApp(ctk.CTk):
+class ORemoveApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         ctk.set_appearance_mode("dark")
@@ -1200,7 +1200,7 @@ def main():
     # python app.py --self-test report.txt [model_file ...]
     if len(sys.argv) >= 3 and sys.argv[1] == "--self-test":
         sys.exit(self_test(Path(sys.argv[2]), sys.argv[3:] or [m.filename for m in MODELS]))
-    app = StemExtractorApp()
+    app = ORemoveApp()
     app.mainloop()
 
 
