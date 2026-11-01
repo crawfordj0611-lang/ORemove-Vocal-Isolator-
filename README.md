@@ -32,7 +32,7 @@
 - **Organised output.** Stems land in `acapellas/` and `instrumentals/`, named after the video or file. Existing files are never overwritten.
 - **Play straight away.** Each finished song gets one-click **▶ Acapella** and **▶ Instrumental** buttons, and **Show** opens it in Explorer.
 - **Modern interface.** Dark, minimal design with a live step indicator, elapsed time, and a device badge showing whether your GPU is in use.
-- **Fast start.** The window opens instantly while the AI engine loads in the background.
+- **Built for speed.** Half-precision (16-bit) processing on NVIDIA GPUs, the model stays loaded between songs, and a **Faster** quality mode that roughly halves BS-Roformer processing time. The window opens instantly while the AI engine loads in the background.
 - **Remembers your choices.** Model, format and folders carry over between sessions.
 - **Self-contained.** FFmpeg and the fast model are bundled; no Python or setup needed.
 
@@ -58,7 +58,7 @@ Get the latest version from the **[Releases](https://github.com/crawfordj0611-la
 ## Quick start
 
 1. **Choose a source.** Paste a YouTube link, or click **Browse** to pick one or more audio files. You can also paste a file's path.
-2. **Choose a model** from the dropdown (see [Models](#models)), a format (**WAV** or **MP3**), and where to save.
+2. **Choose a model** from the dropdown (see [Models](#models)), a format (**WAV** or **MP3**), a **Quality** (see [Speed](#speed)), and where to save.
 3. **Click Extract stems.** Progress moves through **Get audio → Separate → Save**. When it's done, play the stems right from the window.
 
 Open **Show details** at any time for a technical log.
@@ -73,7 +73,20 @@ Every model outputs both an acapella and an instrumental. The dropdown shows wha
 | **BS-Roformer 1296** | Acapellas | Highest-rated acapella quality in the same benchmark. Downloaded once on first use. |
 | **MDX-Net Inst HQ 3** | Speed | Good quality in a fraction of the time. Bundled with the app. |
 
-The BS-Roformer models are a large one-time download each, stored in the app's `models` folder and reused afterwards.
+The BS-Roformer models are a one-time download of 610 MB each; MDX-Net Inst HQ 3 (64 MB) is included. Models are stored in the app's `models` folder and reused afterwards.
+
+## Speed
+
+**Quality: Best** (default) gives the highest quality. **Quality: Faster** runs BS-Roformer with 2 overlapping passes instead of 4: roughly twice as fast, with a small loss of quality that's mostly audible as slightly less smooth transitions. It doesn't affect MDX-Net Inst HQ 3.
+
+On the NVIDIA GPU edition, ORemove also speeds things up automatically:
+
+- BS-Roformer runs in **16-bit (half) precision**, which RTX cards process much faster.
+- MDX-Net Inst HQ 3 runs **on the GPU** in batches, also in 16-bit precision.
+- The model **stays loaded** between songs, so only the first extraction waits for it to load.
+- If the GPU runs out of memory, ORemove **retries automatically** with lower-memory settings and keeps using them for the rest of the session.
+
+**Show details** logs the settings used and how long each separation took (`Separated in …s`).
 
 ## Output
 
@@ -93,15 +106,15 @@ The default folder is `Music\ORemove`. Click **Change** to pick another; the app
 | **Graphics** | **NVIDIA only:** GeForce GTX 900 series or newer, 4 GB+ VRAM (8 GB+ recommended for BS-Roformer), current driver. **AMD and Intel GPUs are not supported.** | Any, or none (not used) |
 | **Processor** | Any modern 4+ core CPU | 6–8 cores recommended, 4 minimum |
 | **Memory** | 16 GB recommended | 8 GB minimum, 16 GB recommended |
-| **Disk** | ~6 GB, plus ~1.5 GB for the BS-Roformer models | ~2 GB, plus ~1.5 GB for the BS-Roformer models |
+| **Disk** | ~6 GB, plus 1.2 GB for both BS-Roformer models (10 GB free recommended) | ~2 GB, plus 1.2 GB for both BS-Roformer models (5 GB free recommended) |
 | **Internet** | For YouTube downloads and the first use of each BS-Roformer model | Same |
 
 **Typical processing time for a 4-minute song** (estimates; they vary with hardware):
 
 | | BS-Roformer | MDX-Net Inst HQ 3 |
 |---|---|---|
-| **NVIDIA GPU edition** (RTX card) | Seconds to about a minute | About a minute (runs on the CPU) |
-| **CPU edition** | 15–30+ minutes | 2–6 minutes |
+| **NVIDIA GPU edition** (RTX card) | Seconds to about a minute | Seconds |
+| **CPU edition** | 15–30+ minutes (about half with **Faster**) | 2–6 minutes |
 
 WAV stems take about 10 MB per minute of audio; MP3 at 320 kbps takes about 2.4 MB per minute.
 

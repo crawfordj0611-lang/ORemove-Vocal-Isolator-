@@ -116,6 +116,12 @@ MODELS_BY_LABEL = {m.label: m for m in MODELS}
 
 OUTPUT_FORMATS = ["WAV", "MP3"]  # WAV is lossless; MP3 is written at 320 kbps
 
+QUALITY_MODES = ["Best", "Faster"]  # "Faster": half the overlapping passes for BS-Roformer
+
+# The self-test switches this on to exercise the NVIDIA GPU code path (the fast
+# model converted to PyTorch, in batches) on build machines without a GPU.
+force_gpu_settings = False
+
 # Share of the progress bar given to each stage.
 DOWNLOAD_SHARE = 0.40   # 0 % -> 40 %  : yt-dlp download
 MODEL_LOAD_AT = 0.45    # 45 %         : model loaded, separation starts
@@ -157,6 +163,7 @@ class Job:
     model_file: str
     output_format: str  # "WAV" or "MP3"
     output_dir: Path
+    faster: bool = False  # fewer overlapping passes: about 2x faster, slightly lower quality
 
 
 YOUTUBE_URL_RE = re.compile(
@@ -281,6 +288,25 @@ class _YtDlpLogger:
         self._log(f"yt-dlp: {msg}")
 
 
+# The loaded model, kept between runs so each extraction doesn't reload it.
+# Only one job runs at a time, so no locking is needed. "safe" becomes True
+# after a GPU out-of-memory error and stays on for the rest of the session.
+_cache = {"key": None, "separator": None, "safe": False}
+
+
+def _release_separator():
+    """Drop the loaded model and free its GPU memory."""
+    _cache["key"] = _cache["separator"] = None
+    try:
+        import gc
+        import torch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
 class ExtractionPipeline:
     """
     Download + separation logic.
@@ -298,8 +324,6 @@ class ExtractionPipeline:
         self._progress_cb = progress
         self._stage_cb = stage
         self._index, self._count = 0, 1  # position in the current batch
-        self._separator = None
-        self._separator_key = None
 
     def progress(self, value):
         """Report progress of the current item, scaled to the whole batch."""
@@ -442,10 +466,22 @@ class ExtractionPipeline:
         self.log("Separating stems...")
         self.stage("separate", "Separating stems")
         self.progress(None)
+        started = time.monotonic()
         try:
             produced = separator.separate(str(wav))
         except Exception as exc:
-            raise PipelineError(f"Separation failed: {exc}") from exc
+            if "out of memory" not in str(exc).lower() or _cache["safe"]:
+                raise PipelineError(f"Separation failed: {exc}") from exc
+            # The GPU ran out of memory with the fast settings: retry once with
+            # the conservative ones (no batching, full precision).
+            self.log("GPU ran out of memory; retrying with lower-memory settings...")
+            _release_separator()
+            separator = self._load_separator(job, stems_dir, safe=True)
+            try:
+                produced = separator.separate(str(wav))
+            except Exception as exc2:
+                raise PipelineError(f"Separation failed: {exc2}") from exc2
+        self.log(f"Separated in {time.monotonic() - started:.1f}s")
 
         # audio-separator returns file names relative to output_dir.
         paths = [p if p.is_absolute() else stems_dir / p for p in map(Path, produced)]
@@ -455,28 +491,67 @@ class ExtractionPipeline:
         self.progress(SEPARATED_AT)
         return paths
 
-    def _load_separator(self, job: Job, stems_dir: Path):
-        """Create the separator and load the model, reusing it across a batch."""
-        key = (job.model_file, job.output_format, str(stems_dir))
-        if self._separator_key == key:
-            return self._separator
-
-        self.log("Loading the AI engine (PyTorch)...")
-        self.stage("separate", "Loading the AI engine")
-        self.progress(None)
+    def _load_separator(self, job: Job, stems_dir: Path, safe: bool = False):
+        """
+        Return a separator with the job's model loaded. The loaded model is kept
+        between runs (and across a batch) and only reloaded when the model,
+        format or quality setting changes.
+        """
         try:
             from audio_separator.separator import Separator
+            import torch
         except ImportError as exc:
             raise PipelineError(
                 "audio-separator is not installed correctly. "
                 "Run: pip install -r requirements.txt"
             ) from exc
 
+        cuda = torch.cuda.is_available()
+        safe = safe or _cache["safe"]
+        gpu_settings = (cuda or force_gpu_settings) and not safe
+        key = (job.model_file, job.output_format, job.faster, safe, gpu_settings)
+        if _cache["key"] == key:
+            # Point the loaded model at this run's folder; it is read when writing.
+            _cache["separator"].output_dir = str(stems_dir)
+            _cache["separator"].model_instance.output_dir = str(stems_dir)
+            self.log(f"Model already loaded: {job.model_file}")
+            return _cache["separator"]
+        _release_separator()
+
+        self.log("Loading the AI engine (PyTorch)...")
+        self.stage("separate", "Loading the AI engine")
+        self.progress(None)
         try:
             device = detect_device()
             self.log(f"Running on: {device}" + (" (slower; an NVIDIA GPU is much faster)" if device == "CPU" else ""))
         except Exception:
             pass  # device info is a nicety only
+
+        roformer = "roformer" in job.model_file.lower()
+        options = dict(
+            # Half precision on NVIDIA GPUs: native float16 for BS-Roformer (verified
+            # by audio-separator), autocast for the MDX-Net model.
+            use_native_fp16=cuda and not safe and roformer,
+            use_autocast=cuda and not safe and not roformer,
+            # A segment size other than the model's own (256) makes audio-separator
+            # run the MDX-Net model through PyTorch, which uses the GPU, instead of
+            # ONNX Runtime on the CPU; batching keeps the GPU busy.
+            mdx_params={"hop_length": 1024, "segment_size": 512 if gpu_settings else 256,
+                        "overlap": 0.25, "batch_size": 4 if gpu_settings else 1,
+                        "enable_denoise": False},
+            # BS-Roformer runs 4 overlapping passes by default; "Faster" uses 2.
+            mdxc_params={"segment_size": 256, "override_model_segment_size": False,
+                         "batch_size": None, "overlap": 2 if job.faster else None,
+                         "pitch_shift": 0},
+        )
+        settings = [name for name, on in [
+            ("float16", options["use_native_fp16"]),
+            ("autocast", options["use_autocast"]),
+            ("MDX-Net on PyTorch, batch 4", gpu_settings and not roformer),
+            ("2 passes (Faster)", job.faster and roformer),
+            ("low-memory mode", safe),
+        ] if on]
+        self.log("Settings: " + (", ".join(settings) or "standard"))
 
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
         separator = Separator(
@@ -485,6 +560,7 @@ class ExtractionPipeline:
             output_dir=str(stems_dir),
             output_format=job.output_format,
             output_bitrate="320k" if job.output_format == "MP3" else None,
+            **options,
         )
 
         model_cached = (MODEL_DIR / job.model_file).exists()
@@ -497,7 +573,7 @@ class ExtractionPipeline:
         except Exception as exc:
             raise PipelineError(f"Could not load model '{job.model_file}': {exc}") from exc
         self.progress(MODEL_LOAD_AT)
-        self._separator, self._separator_key = separator, key
+        _cache.update(key=key, separator=separator, safe=safe)
         return separator
 
     # ---- Step 3: put the stems where they belong ---------------------------
@@ -604,7 +680,7 @@ class ExtractionPipeline:
 STAGES = [("download", "Get audio"), ("separate", "Separate"), ("save", "Save")]
 
 
-def short_path(path: Path, limit: int = 48) -> str:
+def short_path(path: Path, limit: int = 34) -> str:
     """Shorten a long path from the left so the end (the folder name) stays visible."""
     text = str(path)
     return text if len(text) <= limit else "…" + text[-(limit - 1):]
@@ -627,6 +703,8 @@ class ORemoveApp(ctk.CTk):
         self.model_label = model_label if model_label in MODELS_BY_LABEL else MODELS[0].label
         fmt = self.settings.get("format")
         self.output_format = fmt if fmt in OUTPUT_FORMATS else OUTPUT_FORMATS[0]
+        quality = self.settings.get("quality")
+        self.quality = quality if quality in QUALITY_MODES else QUALITY_MODES[0]
 
         self.events: queue.Queue = queue.Queue()  # worker threads -> GUI messages
         self.worker: threading.Thread | None = None
@@ -740,9 +818,10 @@ class ORemoveApp(ctk.CTk):
 
     def _build_options(self):
         card = self._card(row=2)
-        card.grid_columnconfigure(1, weight=1)
+        card.grid_columnconfigure(0, weight=0)
+        card.grid_columnconfigure(2, weight=1)
 
-        self._label(card, "Model").grid(row=0, column=0, columnspan=2, sticky="w",
+        self._label(card, "Model").grid(row=0, column=0, columnspan=3, sticky="w",
                                         padx=20, pady=(16, 8))
         self.model_menu = ctk.CTkOptionMenu(
             card, values=[m.label for m in MODELS], command=self._on_model_change,
@@ -752,26 +831,33 @@ class ORemoveApp(ctk.CTk):
             text_color=TEXT, text_color_disabled=SUBTLE,
             dropdown_fg_color=SURFACE, dropdown_hover_color=FIELD, dropdown_text_color=TEXT)
         self.model_menu.set(self.model_label)
-        self.model_menu.grid(row=1, column=0, columnspan=2, sticky="ew", padx=20)
+        self.model_menu.grid(row=1, column=0, columnspan=3, sticky="ew", padx=20)
         self.model_desc = self._label(card, MODELS_BY_LABEL[self.model_label].note,
                                       font="small", color=MUTED)
-        self.model_desc.grid(row=2, column=0, columnspan=2, sticky="w", padx=20, pady=(8, 14))
+        self.model_desc.grid(row=2, column=0, columnspan=3, sticky="w", padx=20, pady=(8, 14))
 
-        tk.Frame(card, height=1, bg=BORDER, highlightthickness=0).grid(row=3, column=0, columnspan=2,
+        tk.Frame(card, height=1, bg=BORDER, highlightthickness=0).grid(row=3, column=0, columnspan=3,
                                                            sticky="ew", padx=20)
 
-        # Format (left) and output folder (right) share one row.
+        # Format, quality and output folder share one row.
         self._label(card, "Format").grid(row=4, column=0, sticky="w", padx=20, pady=(16, 8))
-        self._label(card, "Save to").grid(row=4, column=1, sticky="w", padx=(24, 20), pady=(16, 8))
+        self._label(card, "Quality").grid(row=4, column=1, sticky="w", padx=(20, 0), pady=(16, 8))
+        self._label(card, "Save to").grid(row=4, column=2, sticky="w", padx=(20, 20), pady=(16, 8))
 
         self.format_seg = self._segmented(card, OUTPUT_FORMATS, self.output_format,
                                           self._on_format_change)
-        self.format_seg.configure(width=150)
+        self.format_seg.configure(width=130)
         self.format_seg.grid(row=5, column=0, sticky="w", padx=20, pady=(0, 20))
+
+        # "Faster" halves BS-Roformer's overlapping passes: about 2x faster,
+        # with a small loss of quality.
+        self.quality_seg = self._segmented(card, QUALITY_MODES, self.quality, self._on_quality_change)
+        self.quality_seg.configure(width=150)
+        self.quality_seg.grid(row=5, column=1, sticky="w", padx=(20, 0), pady=(0, 20))
 
         folder = ctk.CTkFrame(card, fg_color=FIELD, corner_radius=10, height=38,
                               border_width=1, border_color=BORDER)
-        folder.grid(row=5, column=1, sticky="ew", padx=(24, 20), pady=(0, 20))
+        folder.grid(row=5, column=2, sticky="ew", padx=(20, 20), pady=(0, 20))
         folder.grid_columnconfigure(0, weight=1)
         self.output_label = self._label(folder, short_path(self.output_dir), font="small", color=TEXT)
         self.output_label.grid(row=0, column=0, sticky="ew", padx=(12, 4), pady=6)
@@ -887,6 +973,10 @@ class ORemoveApp(ctk.CTk):
         self.model_desc.configure(text=MODELS_BY_LABEL[label].note)
         self._remember()
 
+    def _on_quality_change(self, quality):
+        self.quality = quality
+        self._remember()
+
     def _on_format_change(self, fmt):
         self.output_format = fmt
         self._remember()
@@ -902,7 +992,7 @@ class ORemoveApp(ctk.CTk):
 
     def _remember(self):
         self.settings.update(model=self.model_label, format=self.output_format,
-                             output_dir=str(self.output_dir))
+                             quality=self.quality, output_dir=str(self.output_dir))
         save_settings(self.settings)
 
     def _toggle_details(self):
@@ -926,7 +1016,7 @@ class ORemoveApp(ctk.CTk):
     def _set_running(self, running: bool):
         state = "disabled" if running else "normal"
         for widget in (self.url_entry, self.paste_button, self.browse_button, self.model_menu,
-                       self.format_seg, self.change_button):
+                       self.format_seg, self.quality_seg, self.change_button):
             widget.configure(state=state)
         self.start_button.configure(
             state=state, text="Extracting…" if running else "Extract stems",
@@ -947,7 +1037,8 @@ class ORemoveApp(ctk.CTk):
             return
 
         job = Job(sources=sources, model_file=MODELS_BY_LABEL[self.model_label].filename,
-                  output_format=self.output_format, output_dir=self.output_dir)
+                  output_format=self.output_format, output_dir=self.output_dir,
+                  faster=self.quality == "Faster")
 
         self._set_running(True)
         self.results_card.grid_remove()
@@ -1151,14 +1242,25 @@ class ORemoveApp(ctk.CTk):
         self.log_box.configure(state="disabled")
 
 
-def self_test(report_path: Path, model_files: list[str]) -> int:
+def self_test(report_path: Path, model_files: list[str] | None) -> int:
     """
     Headless check used by the Windows build: FFmpeg is found, and a short
-    generated test tone goes through each given UVR model (default: all) and
-    comes out as two stems. Writes a report to `report_path`; returns the exit code.
+    generated test tone goes through each UVR model and comes out as two
+    stems. With no models given it also covers the speed paths: the fast model
+    on the GPU code path, the "Faster" quality mode, and reusing a loaded model.
+    Writes a report to `report_path`; returns the exit code.
     """
+    global force_gpu_settings
     lines = []
     log = lines.append
+    fast_model = MODELS[-1].filename
+    best_model = MODELS[0].filename
+    # (model, faster, GPU code path, must reuse the loaded model)
+    cases = [(m, False, False, False) for m in (model_files or [m.filename for m in MODELS])]
+    if not model_files:
+        cases += [(fast_model, False, True, False),
+                  (best_model, True, False, False),
+                  (best_model, True, False, True)]
     try:
         if not ffmpeg_available():
             raise PipelineError("FFmpeg not found")
@@ -1169,15 +1271,18 @@ def self_test(report_path: Path, model_files: list[str]) -> int:
             tone = tmp / "tone.wav"
             subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
                             "sine=frequency=440:duration=8", "-ac", "2", "-ar", "44100", str(tone)],
-                           check=True)
-            for model_file in model_files:
-                log(f"--- {model_file}")
-                stems_dir = tmp / f"stems_{model_file}"
+                           check=True, creationflags=NO_WINDOW)
+            for n, (model_file, faster, gpu_path, reuse) in enumerate(cases):
+                log(f"--- {model_file}" + (" [Faster]" if faster else "")
+                    + (" [GPU code path]" if gpu_path else "") + (" [reuse]" if reuse else ""))
+                force_gpu_settings = gpu_path
+                stems_dir = tmp / f"stems{n}"
                 stems_dir.mkdir()
                 job = Job(sources=[], model_file=model_file, output_format="WAV",
-                          output_dir=tmp / f"out_{model_file}")
+                          output_dir=tmp / f"out{n}", faster=faster)
                 pipeline = ExtractionPipeline(log=log, progress=lambda _v: None)
                 started = time.monotonic()
+                first_line = len(lines)
                 saved = pipeline.file_stems(pipeline.separate(tone, job, stems_dir), "Self Test",
                                             job.output_dir)
                 for path in saved:
@@ -1185,6 +1290,8 @@ def self_test(report_path: Path, model_files: list[str]) -> int:
                 kinds = sorted(p.parent.name for p in saved)
                 if kinds != ["acapellas", "instrumentals"]:
                     raise PipelineError(f"{model_file}: expected an acapella and an instrumental, got {kinds}")
+                if reuse and not any("Model already loaded" in l for l in lines[first_line:]):
+                    raise PipelineError(f"{model_file}: the loaded model was not reused")
                 log(f"ok in {time.monotonic() - started:.1f}s")
         log("SELF-TEST PASSED")
         code = 0
@@ -1192,6 +1299,8 @@ def self_test(report_path: Path, model_files: list[str]) -> int:
         log(traceback.format_exc())
         log(f"SELF-TEST FAILED: {exc}")
         code = 1
+    finally:
+        force_gpu_settings = False
     report_path.write_text("\n".join(lines), encoding="utf-8")
     return code
 
@@ -1199,7 +1308,7 @@ def self_test(report_path: Path, model_files: list[str]) -> int:
 def main():
     # python app.py --self-test report.txt [model_file ...]
     if len(sys.argv) >= 3 and sys.argv[1] == "--self-test":
-        sys.exit(self_test(Path(sys.argv[2]), sys.argv[3:] or [m.filename for m in MODELS]))
+        sys.exit(self_test(Path(sys.argv[2]), sys.argv[3:] or None))
     app = ORemoveApp()
     app.mainloop()
 

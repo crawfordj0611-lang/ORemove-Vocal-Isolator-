@@ -41,7 +41,7 @@ If any GPU entry says **NVIDIA**, use the **NVIDIA GPU edition**. Otherwise, use
 
 - Windows 10 or 11, 64-bit
 - 8 GB RAM minimum (16 GB recommended)
-- Free disk space: about 6 GB for the NVIDIA GPU edition or 2 GB for the CPU edition, plus about 1.5 GB for the BS-Roformer models (downloaded on first use)
+- Free disk space: about 6 GB for the NVIDIA GPU edition or 2 GB for the CPU edition, plus 1.2 GB if you use both BS-Roformer models (610 MB each, downloaded on first use). Recommended free space: 10 GB for the NVIDIA GPU edition, 5 GB for the CPU edition
 - NVIDIA GPU edition only: an NVIDIA GeForce GTX 900-series or newer card with a current driver
 
 ---
@@ -123,7 +123,7 @@ Keep everything in the ORemove folder together; the program needs the other file
    | **CPU only** with an **orange** dot (CPU edition) | Normal for the CPU edition. |
 
 2. **Try a song.** Paste a YouTube link or click **Browse** to pick an audio file, then click **Extract stems**.
-3. **First use of a BS-Roformer model** downloads it once, a few hundred MB. This needs an internet connection, and the status line says **Downloading model (first use only)…**. After that, the model is reused.
+3. **First use of a BS-Roformer model** downloads it once (610 MB). This needs an internet connection, and the status line says **Downloading model (first use only)…**. After that, the model is reused.
 
 Your stems are saved to **Music\ORemove**, in an **acapellas** and an **instrumentals** folder. See the [README](README.md#quick-start) for how to use the app.
 
@@ -183,7 +183,7 @@ To open the program folder of the NVIDIA GPU edition, press **Win + R**, type `%
 | **The installer says no NVIDIA graphics card was found** | Your PC has no NVIDIA card Windows can see. Use the [CPU edition](#3-install-the-cpu-edition). |
 | **The badge says "No NVIDIA GPU"** on a PC with an NVIDIA card | Update your NVIDIA driver from [nvidia.com/drivers](https://www.nvidia.com/drivers) or the NVIDIA app, restart your PC, then open ORemove again. **Show details** in the app shows more. |
 | **Antivirus quarantines ORemove** | Some antivirus products flag unsigned apps built with PyInstaller by mistake. Restore the file and add an exception for the ORemove folder, or download it again from the official [Releases page](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest). |
-| **"Not enough disk space"** | Free up space on drive C:. The NVIDIA GPU edition needs about 6 GB, plus about 1.5 GB for the BS-Roformer models. |
+| **"Not enough disk space"** | Free up space on drive C:. The NVIDIA GPU edition needs about 6 GB, plus 1.2 GB for both BS-Roformer models; 10 GB free is recommended. |
 | **ORemove doesn't start** (CPU edition) | Make sure you extracted the zip (see [section 3](#3-install-the-cpu-edition)) and that all its files are still in the folder. |
 
 Still stuck? [Open an issue](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/issues) with your Windows version, your graphics card, and what you see. Include the text from **Show details** if the app opens.

@@ -1,5 +1,12 @@
 Windows builds of **ORemove - AI Powered Vocal Isolator**: AI stem separation for YouTube links and your own audio files.
 
+### What's new in 1.4.0: faster separation
+- **NVIDIA GPUs:** BS-Roformer runs in 16-bit precision, and MDX-Net Inst HQ 3 now runs on the GPU too.
+- **The model stays loaded** between songs, so only the first extraction waits for it.
+- **New Quality option, "Faster":** roughly twice as fast with BS-Roformer, with a small quality trade-off.
+- **Automatic low-memory retry** if the GPU runs out of memory.
+- The log (**Show details**) now shows how long each separation took.
+
 > **⚠️ GPU acceleration works with NVIDIA graphics cards only.** AMD and Intel GPUs are not supported. If your PC doesn't have an NVIDIA card, download the CPU edition.
 
 ### NVIDIA GPU edition: NVIDIA graphics cards only
