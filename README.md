@@ -25,7 +25,7 @@
 ## Features
 
 - **Drop it in.** Drag audio files onto the window, browse for them, or paste a YouTube link. MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, WMA, AIFF and video files all work (only the audio is used).
-- **Top-rated separation models.** BS-Roformer models that lead the benchmark published with [audio-separator](https://github.com/nomadkaraoke/python-audio-separator), plus a fast MDX-Net option.
+- **Top-rated separation models.** BS-Roformer models that lead the benchmark published with [audio-separator](https://github.com/nomadkaraoke/python-audio-separator), newer MelBand Roformer models for the fullest sound, and a fast MDX-Net option.
 - **Listen right away.** Each result has its own waveform and player. Click a waveform to jump anywhere, and use **A/B** to switch between vocals and instrumental at the same point while it plays.
 - **GPU accelerated.** NVIDIA GPUs on Windows (16-bit processing for extra speed) and Apple Silicon GPUs on Mac, turning minutes into seconds.
 - **Batch processing.** Drop or select several songs at once. They run one after another with the model loaded once, and a file that can't be read is skipped without stopping the rest.
@@ -74,15 +74,17 @@ Every model outputs both an acapella and an instrumental. Settings shows what ea
 |---|---|---|
 | **BS-Roformer 1297** (default) | Instrumentals | Highest-rated instrumental quality in audio-separator's benchmark. 610 MB, downloaded once on first use. |
 | **BS-Roformer 1296** | Acapellas | Highest-rated acapella quality in the same benchmark. 610 MB, downloaded once on first use. |
+| **MelBand Roformer Inst** (becruily) | Fullest instrumentals | Newer community model; audio-separator's recommended presets rate it the highest-scoring instrumental model. 871 MB, downloaded once on first use. |
+| **MelBand Roformer Vocals** (becruily) | Fullest acapellas | Newer community model tuned to capture more of the voice. 871 MB, downloaded once on first use. |
 | **MDX-Net Inst HQ 3** | Speed | Good quality in a fraction of the time. 64 MB, included. |
 
 ## Speed
 
-**Quality: Best** (default) gives the highest quality. **Quality: Faster** runs BS-Roformer with 2 overlapping passes instead of 4: roughly twice as fast, with a small loss of quality that's mostly audible as slightly less smooth transitions. It doesn't affect MDX-Net Inst HQ 3.
+**Quality: Best** (default) gives the highest quality. **Quality: Faster** runs the Roformer models with 2 overlapping passes instead of 4: roughly twice as fast, with a small loss of quality that's mostly audible as slightly less smooth transitions. It doesn't affect MDX-Net Inst HQ 3.
 
 On an NVIDIA GPU, ORemove also speeds things up automatically:
 
-- BS-Roformer runs in **16-bit (half) precision**, which RTX cards process much faster.
+- The Roformer models run in **16-bit (half) precision**, which RTX cards process much faster (Apple GPUs too).
 - MDX-Net Inst HQ 3 runs **on the GPU** in batches, also in 16-bit precision.
 - If the GPU runs out of memory, ORemove **retries automatically** with lower-memory settings and keeps using them for the rest of the session.
 
@@ -105,7 +107,7 @@ The default folder is **Music/ORemove** in your user folder. Change it in Settin
 | **System** | Windows 10 or 11, 64-bit | Windows 10 or 11, 64-bit | macOS 13 Ventura or newer |
 | **Graphics / chip** | **NVIDIA only:** GeForce GTX 900 series or newer, 4 GB+ VRAM (8 GB+ recommended for BS-Roformer), current driver. **AMD and Intel GPUs are not supported.** | Any, or none (not used) | Apple M1 or newer (Intel Macs are not supported) |
 | **Memory** | 16 GB recommended | 8 GB minimum, 16 GB recommended | 8 GB minimum, 16 GB recommended |
-| **Disk** | ~6 GB, plus 1.2 GB for both BS-Roformer models (10 GB free recommended) | ~2 GB, plus 1.2 GB for both BS-Roformer models (5 GB free recommended) | ~2 GB, plus 1.2 GB for both BS-Roformer models (5 GB free recommended) |
+| **Disk** | ~6 GB, plus up to 3 GB for the downloadable models (12 GB free recommended) | ~2 GB, plus up to 3 GB for the downloadable models (6 GB free recommended) | ~2 GB, plus up to 3 GB for the downloadable models (6 GB free recommended) |
 | **Internet** | For YouTube downloads and the first use of each BS-Roformer model | Same | Same |
 
 **Typical processing time for a 4-minute song** (estimates; they vary with hardware):

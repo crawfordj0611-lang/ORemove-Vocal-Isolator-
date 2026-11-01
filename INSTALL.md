@@ -46,7 +46,7 @@ If any GPU entry says **NVIDIA**, use the **NVIDIA GPU edition**. Otherwise, use
 
 - Windows 10 or 11, 64-bit
 - 8 GB RAM minimum (16 GB recommended)
-- Free disk space: about 6 GB for the NVIDIA GPU edition or 2 GB for the CPU edition, plus 1.2 GB if you use both BS-Roformer models (610 MB each, downloaded on first use). Recommended free space: 10 GB for the NVIDIA GPU edition, 5 GB for the CPU edition
+- Free disk space: about 6 GB for the NVIDIA GPU edition or 2 GB for the CPU edition, plus up to 3 GB for the downloadable models (610–871 MB each, downloaded the first time you use each one). Recommended free space: 12 GB for the NVIDIA GPU edition, 6 GB for the CPU edition
 - NVIDIA GPU edition only: an NVIDIA GeForce GTX 900-series or newer card with a current driver
 
 ---
@@ -161,7 +161,7 @@ Continue with [First launch](#5-first-launch).
    | **CPU only** with an **orange** dot (CPU edition) | Normal for the CPU edition. |
 
 2. **Try a song.** Drag an audio file onto the window, click **Browse files**, or paste a YouTube link and click **Separate**.
-3. **First use of a BS-Roformer model** downloads it once (610 MB). This needs an internet connection, and the progress screen says **Downloading model (first use only)…**. After that, the model is reused.
+3. **First use of a Roformer model** downloads it once (610–871 MB). This needs an internet connection, and the progress screen says **Downloading model (first use only)…**. After that, the model is reused.
 4. **Listen.** When it's done, play the **Vocals** and **Instrumental** cards right in the window.
 
 Your stems are saved to **Music/ORemove** in your user folder, in an **acapellas** and an **instrumentals** folder. See the [README](README.md#quick-start) for how to use the app.
@@ -234,7 +234,7 @@ To open the program folder of the NVIDIA GPU edition, press **Win + R**, type `%
 | **The installer says no NVIDIA graphics card was found** | Your PC has no NVIDIA card Windows can see. Use the [CPU edition](#3-install-the-cpu-edition). |
 | **The badge says "No NVIDIA GPU"** on a PC with an NVIDIA card | Update your NVIDIA driver from [nvidia.com/drivers](https://www.nvidia.com/drivers) or the NVIDIA app, restart your PC, then open ORemove again. **Settings → Activity log** in the app shows more. |
 | **Antivirus quarantines ORemove** | Some antivirus products flag unsigned apps built with PyInstaller by mistake. Restore the file and add an exception for the ORemove folder, or download it again from the official [Releases page](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest). |
-| **"Not enough disk space"** | Free up space on drive C:. The NVIDIA GPU edition needs about 6 GB, plus 1.2 GB for both BS-Roformer models; 10 GB free is recommended. |
+| **"Not enough disk space"** | Free up space on drive C:. The NVIDIA GPU edition needs about 6 GB, plus up to 3 GB for the downloadable models; 12 GB free is recommended. |
 | **ORemove doesn't start** (CPU edition) | Make sure you extracted the zip (see [section 3](#3-install-the-cpu-edition)) and that all its files are still in the folder. |
 
 Still stuck? [Open an issue](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/issues) with your Windows or macOS version, your graphics card or Mac model, and what you see. Include the text from **Settings → Activity log** if the app opens.

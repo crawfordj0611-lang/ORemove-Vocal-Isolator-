@@ -60,7 +60,7 @@ from urllib.parse import unquote
 
 APP_TITLE = "ORemove"
 APP_TAGLINE = "AI Powered Vocal Isolator"
-APP_VERSION = "1.5.2"
+APP_VERSION = "1.5.3"
 
 # True when running as the packaged app (built with PyInstaller).
 FROZEN = getattr(sys, "frozen", False)
@@ -119,6 +119,12 @@ MODELS = [
                 "model_bs_roformer_ep_317_sdr_12.9755.ckpt", "610 MB"),
     ModelOption("BS-Roformer 1296", "Best for acapellas",
                 "model_bs_roformer_ep_368_sdr_12.9628.ckpt", "610 MB"),
+    # MelBand Roformer by becruily: audio-separator's recommended presets rate the
+    # instrumental model the highest-scoring instrumental model (SDR 17.55).
+    ModelOption("MelBand Roformer Inst", "Fullest instrumentals (becruily)",
+                "mel_band_roformer_instrumental_becruily.ckpt", "871 MB"),
+    ModelOption("MelBand Roformer Vocals", "Fullest acapellas (becruily)",
+                "mel_band_roformer_vocals_becruily.ckpt", "871 MB"),
     ModelOption("MDX-Net Inst HQ 3", "Fastest",
                 "UVR-MDX-NET-Inst_HQ_3.onnx", "Included"),
 ]
@@ -454,6 +460,32 @@ def _describe_device(separator) -> str:
         return ""
 
 
+# Loading a model is done by one thread at a time (a job or a warm-up).
+_engine_lock = threading.RLock()
+
+
+def _reset_gpu_memory_peak():
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+    except Exception:
+        pass
+
+
+def _gpu_memory_peak_mb() -> float | None:
+    """Peak GPU memory used since the last reset (NVIDIA), or current use (Apple); None on the CPU."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return torch.cuda.max_memory_allocated() / 1_048_576
+        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            return torch.mps.driver_allocated_memory() / 1_048_576
+    except Exception:
+        pass
+    return None
+
+
 def _release_separator():
     """Drop the loaded model and free its GPU memory."""
     _cache["key"] = _cache["separator"] = None
@@ -491,6 +523,10 @@ class ExtractionPipeline:
         self._index, self._count = 0, 1  # position in the current batch
         self._shown = 0.0                 # highest progress shown for the current item
         self.run_device = ""              # what the loaded model runs on, e.g. "RTX 4070 SUPER"
+        # Seconds spent in each step, for the breakdown on the results screen.
+        self.timings = {"audio": 0.0, "engine": 0.0, "model_download": 0.0, "model_load": 0.0,
+                        "separate": 0.0, "save": 0.0}
+        self.gpu_memory_mb = 0.0          # peak GPU memory used while separating (proof the GPU worked)
 
     def check_cancel(self):
         """Stop between steps once the user has pressed Stop."""
@@ -667,6 +703,7 @@ class ExtractionPipeline:
                 self.log(f"  separating... {pct}% ({time.monotonic() - started:.0f}s)")
 
         _set_progress_sink(on_progress)
+        _reset_gpu_memory_peak()
         try:
             produced = separator.separate(str(wav))
         except Exception as exc:
@@ -685,7 +722,15 @@ class ExtractionPipeline:
                 raise PipelineError(f"Separation failed: {exc2}") from exc2
         finally:
             _set_progress_sink(None)
-        self.log(f"Separated in {time.monotonic() - started:.1f}s")
+        elapsed = time.monotonic() - started
+        self.timings["separate"] += elapsed
+        self.log(f"Separated in {elapsed:.1f}s")
+        peak = _gpu_memory_peak_mb()
+        if peak is not None:
+            self.gpu_memory_mb = max(self.gpu_memory_mb, peak)
+            self.log(f"GPU memory used while separating: {peak:.0f} MB")
+            if peak < 100:
+                self.log("Warning: the GPU was barely used during separation; it may have run on the CPU.")
 
         # audio-separator returns file names relative to output_dir.
         paths = [p if p.is_absolute() else stems_dir / p for p in map(Path, produced)]
@@ -701,6 +746,11 @@ class ExtractionPipeline:
         between runs (and across a batch) and only reloaded when the model,
         format or quality setting changes.
         """
+        with _engine_lock:  # a warm-up may be loading the same model right now
+            return self._load_separator_locked(job, stems_dir, safe)
+
+    def _load_separator_locked(self, job: Job, stems_dir: Path, safe: bool):
+        engine_started = time.monotonic()
         try:
             from audio_separator.separator import Separator
             import torch
@@ -709,6 +759,7 @@ class ExtractionPipeline:
                 "audio-separator is not installed correctly. "
                 "Run: pip install -r requirements.txt"
             ) from exc
+        self.timings["engine"] += time.monotonic() - engine_started
 
         cuda = torch.cuda.is_available()
         mps = bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
@@ -792,12 +843,14 @@ class ExtractionPipeline:
 
         _install_progress_hooks()
         _set_progress_sink(on_download)
+        load_started = time.monotonic()
         try:
             separator.load_model(model_filename=job.model_file)
         except Exception as exc:
             raise PipelineError(f"Could not load model '{job.model_file}': {exc}") from exc
         finally:
             _set_progress_sink(None)
+            self.timings["model_load" if model_cached else "model_download"] += time.monotonic() - load_started
         self.progress(MODEL_LOAD_AT)
         _cache.update(key=key, separator=separator, safe=safe, device=_describe_device(separator))
         self.run_device = _cache["device"]
@@ -889,6 +942,7 @@ class ExtractionPipeline:
         self._shown = 0.0
         self.check_cancel()
         wav = work_dir / f"input{i}.wav"  # unique per item: stems are named after it
+        audio_started = time.monotonic()
         if looks_like_url(source):
             if not is_youtube_url(source):
                 raise PipelineError("Only YouTube links are supported (youtube.com or youtu.be).")
@@ -903,13 +957,16 @@ class ExtractionPipeline:
             title = src.stem
             self._title_cb(title)
             self.convert_local_file(src, wav)
+        self.timings["audio"] += time.monotonic() - audio_started
         base_name = sanitize_filename(title)
 
         self.check_cancel()
         stems = self.separate(wav, job, stems_dir)
         try:
             self.check_cancel()  # separation can't be interrupted; discard its result instead
+            save_started = time.monotonic()
             saved = self.file_stems(stems, base_name, job.output_dir)
+            self.timings["save"] += time.monotonic() - save_started
         finally:
             # Free disk space as we go; a batch of long WAVs adds up.
             for path in [wav, *stems]:
@@ -1104,6 +1161,7 @@ class Api:
         self._cancel = threading.Event()
         self._device = ""
         self._idle_timer: threading.Timer | None = None
+        self._warming = False
         self.window = None  # set by main() once the window exists
         self.ready_event = threading.Event()
         settings = load_settings()
@@ -1184,6 +1242,36 @@ class Api:
         elif device != "the CPU":
             self._device = device
             self.emit("device", kind="gpu", name=device)
+
+    def warm_up(self):
+        """
+        The user has started choosing a song: load the AI engine and the chosen
+        model in the background, so separation can begin straight away. Only
+        for models already downloaded (never starts a large download by itself).
+        """
+        if self._warming or (self._worker and self._worker.is_alive()):
+            return
+        s = self._settings
+        job = Job(sources=[], model_file=s["model"], output_format=s["format"],
+                  output_dir=Path(s["output_dir"]), faster=s["quality"] == "Faster")
+        if not (MODEL_DIR / job.model_file).exists():
+            return
+        self._warming = True
+
+        def load():
+            try:
+                pipeline = ExtractionPipeline(log=lambda text: self.emit("log", text=text),
+                                              progress=lambda _v: None, engine=self.on_engine)
+                warm_dir = Path(tempfile.gettempdir()) / "oremove_warmup"
+                warm_dir.mkdir(exist_ok=True)
+                pipeline._load_separator(job, warm_dir)
+                self._schedule_idle_release()
+            except Exception as exc:
+                self.emit("log", text=f"Warm-up skipped: {exc}")
+            finally:
+                self._warming = False
+
+        threading.Thread(target=load, daemon=True).start()
 
     def _schedule_idle_release(self):
         """Free the loaded model (RAM and GPU memory) after 10 idle minutes."""
@@ -1326,7 +1414,9 @@ class Api:
         for failure in failures:
             self.emit("log", text=f"FAILED: {failure}")
         self.emit("done", songs=[self._song_view(e) for e in entries], failures=failures,
-                  seconds=round(seconds, 1), device=_badge_device(pipeline.run_device))
+                  seconds=round(pipeline.timings["separate"], 1), total=round(seconds, 1),
+                  timings={k: round(v, 1) for k, v in pipeline.timings.items()},
+                  gpu_memory_mb=round(pipeline.gpu_memory_mb), device=_badge_device(pipeline.run_device))
 
     def _song_view(self, entry: dict) -> dict | None:
         """A history entry as the results screen shows it (with waveforms and playable URLs)."""

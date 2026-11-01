@@ -1,5 +1,10 @@
 **ORemove - AI Powered Vocal Isolator**: clean acapellas and instrumentals from YouTube links and your own audio files.
 
+### What's new in 1.5.3
+- **New models: MelBand Roformer** by becruily, for the fullest instrumentals and acapellas (871 MB each, downloaded on first use).
+- **See where the time goes.** "Separated in" now means the separation itself, and the results screen breaks down the rest (getting the audio, first-time model download, starting the AI engine, saving) and shows the GPU memory used, so you can confirm your GPU is doing the work.
+- **Faster start:** the AI engine and your chosen model start loading as soon as you begin choosing a song.
+
 ### What's new in 1.5.2
 - **Much lighter while idle.** The AI engine no longer loads when the app opens: it loads when you start a song, and the model is freed after 10 idle minutes. The window no longer checks for updates 10 times a second.
 - **Instant GPU badge.** Your NVIDIA card and driver are read straight from NVIDIA's own tool. If the engine then can't use the GPU, the app says exactly why (for example, a driver that's too old).

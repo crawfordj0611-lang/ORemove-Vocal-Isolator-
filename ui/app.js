@@ -103,8 +103,12 @@ input.addEventListener('input', () => {
   hideStartError();
 });
 input.addEventListener('keydown', e => { if (e.key === 'Enter') start(); });
+// Choosing a song: start loading the AI engine in the background (see Api.warm_up).
+const warmUp = () => { if (api && !running) api.warm_up(); };
+input.addEventListener('focus', warmUp);
 $('clearSource').onclick = () => { selectedFiles = []; input.value = ''; $('clearSource').classList.add('hidden'); input.focus(); };
 $('browse').onclick = async () => {
+  warmUp();
   const paths = await api.browse_files();
   if (!paths || !paths.length) return;
   selectedFiles = paths;
@@ -120,7 +124,7 @@ $('go').onclick = () => start();
 // paths); the page only shows the hover effect.
 const drop = $('drop');
 let dragDepth = 0;
-document.addEventListener('dragenter', e => { e.preventDefault(); if (!running) { dragDepth++; drop.classList.add('hover'); } });
+document.addEventListener('dragenter', e => { e.preventDefault(); if (!running) { if (!dragDepth) warmUp(); dragDepth++; drop.classList.add('hover'); } });
 document.addEventListener('dragover', e => e.preventDefault());
 document.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; drop.classList.remove('hover'); } });
 document.addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; drop.classList.remove('hover'); });
@@ -253,6 +257,15 @@ function appendLog(text) {
 function showResults(list, failures, info) {
   songs = list; songIndex = 0;
   $('doneText').textContent = info.seconds != null ? `Separated in ${fmtDuration(info.seconds)}${info.device ? ' on ' + info.device : ''}` : 'From history';
+  // Where the rest of the time went (downloads, starting the engine, ...).
+  const t = info.timings, timing = $('timing');
+  timing.classList.toggle('hidden', !t);
+  if (t) {
+    const parts = [['getting audio', t.audio], ['first-time model download', t.model_download], ['starting the AI engine', t.engine],
+                   ['loading the model', t.model_load], ['separating', t.separate], ['saving', t.save]]
+      .filter(([, v]) => v >= 1).map(([k, v]) => `${k} ${fmt(v)}`);
+    timing.textContent = `Total ${fmt(info.total)}: ` + parts.join(' · ') + (info.gpu_memory_mb ? ` · GPU memory ${info.gpu_memory_mb} MB` : '');
+  }
   $('failures').classList.toggle('hidden', !(failures && failures.length));
   if (failures && failures.length) $('failures').textContent = `${failures.length} file${failures.length > 1 ? 's' : ''} couldn't be processed: ` + failures.join(' · ');
   const tabs = $('songTabs');

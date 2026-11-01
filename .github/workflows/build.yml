@@ -30,7 +30,7 @@ jobs:
       matrix:
         flavor: ${{ fromJSON(inputs.editions || '["cpu","cuda","mac"]') }}
     runs-on: ${{ matrix.flavor == 'mac' && 'macos-latest' || 'windows-latest' }}
-    timeout-minutes: 150
+    timeout-minutes: 200
     defaults:
       run:
         shell: bash
