@@ -138,5 +138,5 @@ jobs:
 
             **Any PC (CPU only):** download `YT-Stem-Extractor-Windows-CPU.zip`, extract it, and run `YT Stem Extractor.exe` inside. Much slower.
 
-            FFmpeg and the fast model are included; the Best instrumental / Best acapella models download once on first use.
+            FFmpeg and the MDX-Net model are included; the two BS-Roformer models download once on first use.
             Windows SmartScreen may warn because the app isn't code-signed: click "More info" → "Run anyway".

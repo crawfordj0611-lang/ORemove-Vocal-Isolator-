@@ -86,20 +86,28 @@ SETTINGS_FILE = APP_DIR / "settings.json"
 
 @dataclass(frozen=True)
 class ModelOption:
-    label: str        # shown on the model selector
-    filename: str     # model file name known to audio-separator
-    description: str  # one line shown under the selector
+    name: str      # the model's name
+    best_for: str  # what it is best at, shown next to the name in the dropdown
+    filename: str  # model file name known to audio-separator
+    note: str      # one extra line shown under the dropdown
+
+    @property
+    def label(self) -> str:
+        return f"{self.name}  —  {self.best_for}"
 
 
 # Ranked by audio-separator's published benchmark (median SDR over 40 songs).
 # List every model audio-separator knows with:  audio-separator --list_models
 MODELS = [
-    ModelOption("Best instrumental", "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
-                "BS-Roformer 1297  ·  top-rated instrumentals  ·  large one-time download"),
-    ModelOption("Best acapella", "model_bs_roformer_ep_368_sdr_12.9628.ckpt",
-                "BS-Roformer 1296  ·  top-rated acapellas  ·  large one-time download"),
-    ModelOption("Fast", "UVR-MDX-NET-Inst_HQ_3.onnx",
-                "MDX-Net Inst HQ 3  ·  good quality in a fraction of the time"),
+    ModelOption("BS-Roformer 1297", "Best for instrumentals",
+                "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+                "Highest-rated instrumental quality  ·  large one-time download on first use"),
+    ModelOption("BS-Roformer 1296", "Best for acapellas",
+                "model_bs_roformer_ep_368_sdr_12.9628.ckpt",
+                "Highest-rated acapella quality  ·  large one-time download on first use"),
+    ModelOption("MDX-Net Inst HQ 3", "Fastest",
+                "UVR-MDX-NET-Inst_HQ_3.onnx",
+                "Good quality in a fraction of the time  ·  included"),
 ]
 MODELS_BY_LABEL = {m.label: m for m in MODELS}
 
@@ -627,10 +635,16 @@ class StemExtractorApp(ctk.CTk):
 
         self._label(card, "Model").grid(row=0, column=0, columnspan=2, sticky="w",
                                         padx=20, pady=(16, 8))
-        self.model_seg = self._segmented(card, [m.label for m in MODELS], self.model_label,
-                                         self._on_model_change)
-        self.model_seg.grid(row=1, column=0, columnspan=2, sticky="ew", padx=20)
-        self.model_desc = self._label(card, MODELS_BY_LABEL[self.model_label].description,
+        self.model_menu = ctk.CTkOptionMenu(
+            card, values=[m.label for m in MODELS], command=self._on_model_change,
+            height=40, corner_radius=10, dynamic_resizing=False, anchor="w",
+            font=self.fonts["body"], dropdown_font=self.fonts["body"],
+            fg_color=FIELD, button_color=FIELD, button_hover_color="#25252D",
+            text_color=TEXT, text_color_disabled=SUBTLE,
+            dropdown_fg_color=SURFACE, dropdown_hover_color=FIELD, dropdown_text_color=TEXT)
+        self.model_menu.set(self.model_label)
+        self.model_menu.grid(row=1, column=0, columnspan=2, sticky="ew", padx=20)
+        self.model_desc = self._label(card, MODELS_BY_LABEL[self.model_label].note,
                                       font="small", color=MUTED)
         self.model_desc.grid(row=2, column=0, columnspan=2, sticky="w", padx=20, pady=(8, 16))
 
@@ -727,7 +741,7 @@ class StemExtractorApp(ctk.CTk):
 
     def _on_model_change(self, label):
         self.model_label = label
-        self.model_desc.configure(text=MODELS_BY_LABEL[label].description)
+        self.model_desc.configure(text=MODELS_BY_LABEL[label].note)
         self._remember()
 
     def _on_format_change(self, fmt):
@@ -768,7 +782,7 @@ class StemExtractorApp(ctk.CTk):
 
     def _set_running(self, running: bool):
         state = "disabled" if running else "normal"
-        for widget in (self.url_entry, self.paste_button, self.model_seg,
+        for widget in (self.url_entry, self.paste_button, self.model_menu,
                        self.format_seg, self.change_button):
             widget.configure(state=state)
         self.start_button.configure(

@@ -21,22 +21,22 @@ Needs an NVIDIA GTX 900-series or newer card with a current driver. The top mode
 
 ### CPU version (any PC)
 
-Download `YT-Stem-Extractor-Windows-CPU.zip`, extract it, and run `YT Stem Extractor.exe` inside the folder. It works on any 64-bit Windows PC but is much slower, especially with the Best models.
+Download `YT-Stem-Extractor-Windows-CPU.zip`, extract it, and run `YT Stem Extractor.exe` inside the folder. It works on any 64-bit Windows PC but is much slower, especially with the BS-Roformer models.
 
-Both versions include FFmpeg and the Fast model. If Windows SmartScreen warns you (the app isn't code-signed), click **More info**, then **Run anyway**.
+Both versions include FFmpeg and the MDX-Net model. If Windows SmartScreen warns you (the app isn't code-signed), click **More info**, then **Run anyway**.
 
 ## Using it
 
 1. Paste a YouTube link (or click **Paste**).
-2. Choose a **Model**:
+2. Choose a **Model** from the dropdown. Each entry shows the model's name and what it's best for:
 
-   | Model | What it is | Best for |
-   |---|---|---|
-   | **Best instrumental** (default) | BS-Roformer 1297 | The cleanest instrumentals of any model in audio-separator's benchmark |
-   | **Best acapella** | BS-Roformer 1296 | The cleanest acapellas in the same benchmark |
-   | **Fast** | MDX-Net Inst HQ 3 | Good results in a fraction of the time |
+   | Model | Best for |
+   |---|---|
+   | **BS-Roformer 1297** (default) | Instrumentals: the cleanest of any model in audio-separator's benchmark |
+   | **BS-Roformer 1296** | Acapellas: the cleanest in the same benchmark |
+   | **MDX-Net Inst HQ 3** | Speed: good results in a fraction of the time |
 
-   Every model produces both an acapella and an instrumental; the name says which stem it does best. The two Best models are a large one-time download the first time you use each.
+   Every model produces both an acapella and an instrumental; the name says which stem it does best. The two BS-Roformer models are a large one-time download the first time you use each.
 3. Choose **WAV** (lossless) or **MP3** (320 kbps), and where to save. The installed app saves to `Music\YT Stem Extractor` by default.
 4. Click **Extract stems**. When it's done, **Play** opens a stem in your default player and **Show** opens it in Explorer.
 
@@ -51,17 +51,17 @@ Times are estimates; they depend on your hardware and the song's length.
 | | GPU version | CPU version |
 |---|---|---|
 | OS | Windows 10/11 64-bit | Windows 10/11 64-bit |
-| Graphics | NVIDIA GTX 900-series or newer, 4 GB+ video memory (8 GB+ ideal for the Best models), current driver | Not used |
+| Graphics | NVIDIA GTX 900-series or newer, 4 GB+ video memory (8 GB+ ideal for the BS-Roformer models), current driver | Not used |
 | Processor | Any recent 4+ core | 6–8 cores recommended (4 minimum) |
 | RAM | 16 GB recommended | 8 GB minimum, 16 GB recommended |
-| Disk | ~6 GB for the app, plus ~1.5 GB for the Best models | ~2 GB, plus ~1.5 GB for the Best models |
-| Internet | Needed to download from YouTube and, once, the Best models | Same |
+| Disk | ~6 GB for the app, plus ~1.5 GB for the BS-Roformer models | ~2 GB, plus ~1.5 GB for the BS-Roformer models |
+| Internet | Needed to download from YouTube and, once, the BS-Roformer models | Same |
 
 **What to expect:**
 
-- **GPU, Best models:** roughly seconds to a minute for a 4-minute song on an RTX card.
-- **CPU, Fast model:** roughly 2–6 minutes for a 4-minute song. **CPU, Best models:** several times longer, possibly 15–30+ minutes.
-- **Fast model on the GPU version** runs on the CPU (it uses ONNX Runtime, not PyTorch). It's still quick.
+- **GPU, BS-Roformer models:** roughly seconds to a minute for a 4-minute song on an RTX card.
+- **CPU, MDX-Net model:** roughly 2–6 minutes for a 4-minute song. **CPU, BS-Roformer models:** several times longer, possibly 15–30+ minutes.
+- **MDX-Net model on the GPU version** runs on the CPU (it uses ONNX Runtime, not PyTorch). It's still quick.
 - **Startup:** the window opens right away; the AI engine loads in the background (the device badge says "Loading engine…" until it's ready).
 - **File sizes:** WAV is about 10 MB per minute of audio, so a 4-minute song gives two ~40 MB stems. MP3 (320 kbps) is about 2.4 MB per minute.
 
