@@ -40,6 +40,8 @@
 
 Get the latest version from the **[Releases](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest)** page.
 
+> 📘 **New to ORemove? Follow the step-by-step [Installation guide](INSTALL.md).** It covers choosing an edition, installing, first launch, updating, uninstalling and fixing installation problems.
+
 | Edition | Works on | Download |
 |---|---|---|
 | **NVIDIA GPU edition** (fastest) | **Only** PCs with an **NVIDIA** GeForce graphics card (GTX 900 series or newer) | All `ORemove-NVIDIA-GPU-Setup` files: the `.exe` and every `.bin` part |
@@ -49,7 +51,7 @@ Get the latest version from the **[Releases](https://github.com/crawfordj0611-la
 
 **NVIDIA GPU edition:** save the `.exe` and all `.bin` parts into the same folder, then run `ORemove-NVIDIA-GPU-Setup.exe`. If it can't find an NVIDIA graphics card, the installer warns you before installing anything. The installer is split into parts because GitHub limits each file to 2 GB. It installs for your user only (no admin rights needed), adds a Start Menu shortcut, and can be removed from **Settings → Apps**. Installing a new version upgrades the old one and keeps your downloaded models and settings.
 
-**CPU edition:** extract the zip and run `ORemove.exe` inside the folder. Nothing is installed.
+**CPU edition:** extract the zip (right-click → **Extract All…**) and run `ORemove.exe` inside the folder. Nothing is installed.
 
 > Windows SmartScreen may warn that the app is unrecognised because it isn't code-signed. Click **More info**, then **Run anyway**.
 

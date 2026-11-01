@@ -10,4 +10,5 @@ Download **all** the `ORemove-NVIDIA-GPU-Setup` files (the `.exe` and every `.bi
 Download `ORemove-Windows-CPU.zip`, extract it, and run `ORemove.exe` inside. Works everywhere, but much slower.
 
 FFmpeg and the MDX-Net model are included; the two BS-Roformer models download once on first use.
+Step-by-step instructions: [Installation guide](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/blob/main/INSTALL.md).
 Windows SmartScreen may warn because the app isn't code-signed: click **More info**, then **Run anyway**.

@@ -92,7 +92,7 @@ jobs:
         run: |
           $dist = "dist/$env:APP_NAME"
           Copy-Item ffmpeg-bin/* $dist
-          Copy-Item README.md, LICENSE, THIRD-PARTY-NOTICES.md $dist
+          Copy-Item README.md, INSTALL.md, LICENSE, THIRD-PARTY-NOTICES.md $dist
           Copy-Item models $dist -Recurse  # all models, so the next step doesn't re-download them
           # Full license text of every bundled Python package.
           pip-licenses --with-license-file --no-license-path --with-urls --format=plain-vertical --output-file "$dist/THIRD-PARTY-LICENSES.txt"
