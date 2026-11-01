@@ -7,3 +7,10 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# App settings and build output
+settings.json
+installer-out/
+dist/
+build/
+*.spec

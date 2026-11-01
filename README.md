@@ -10,45 +10,64 @@ output/
 
 ## Download for Windows
 
-Get **YT-Stem-Extractor-Windows.zip** from the [latest release](https://github.com/crawfordj0611-lang/Money-Extractor-YT2MP3-Tool/releases/latest) (about 465 MB).
+Both versions are on the [latest release](https://github.com/crawfordj0611-lang/Money-Extractor-YT2MP3-Tool/releases/latest).
 
-1. Extract the zip.
-2. Open the `YT Stem Extractor` folder and run `YT Stem Extractor.exe`.
-3. If Windows SmartScreen warns you (the app isn't code-signed), click **More info**, then **Run anyway**.
+### NVIDIA GPU version (recommended)
 
-FFmpeg and the default UVR model are included, so there is nothing else to install.
+1. Download **all** the `YT-Stem-Extractor-GPU-Setup` files (the `.exe` and every `.bin` part) into the same folder. The installer is split into parts because GitHub limits each file to 2 GB.
+2. Run `YT-Stem-Extractor-GPU-Setup.exe`. It installs for your user only (no admin needed) and adds a Start Menu shortcut.
 
-**This is the CPU version.** It runs on any 64-bit Windows PC but does not use an NVIDIA graphics card, even if you have one. A GPU build would be over 2 GB, too large for a single GitHub release file. For GPU speed, run from source with CUDA (see [Setup](#setup), step 3).
+Needs an NVIDIA GTX 900-series or newer card with a current driver. The top models run on the GPU, so a song takes seconds to a minute instead of many minutes.
+
+### CPU version (any PC)
+
+Download `YT-Stem-Extractor-Windows-CPU.zip`, extract it, and run `YT Stem Extractor.exe` inside the folder. It works on any 64-bit Windows PC but is much slower, especially with the Best models.
+
+Both versions include FFmpeg and the Fast model. If Windows SmartScreen warns you (the app isn't code-signed), click **More info**, then **Run anyway**.
+
+## Using it
+
+1. Paste a YouTube link (or click **Paste**).
+2. Choose a **Model**:
+
+   | Model | What it is | Best for |
+   |---|---|---|
+   | **Best instrumental** (default) | BS-Roformer 1297 | The cleanest instrumentals of any model in audio-separator's benchmark |
+   | **Best acapella** | BS-Roformer 1296 | The cleanest acapellas in the same benchmark |
+   | **Fast** | MDX-Net Inst HQ 3 | Good results in a fraction of the time |
+
+   Every model produces both an acapella and an instrumental; the name says which stem it does best. The two Best models are a large one-time download the first time you use each.
+3. Choose **WAV** (lossless) or **MP3** (320 kbps), and where to save. The installed app saves to `Music\YT Stem Extractor` by default.
+4. Click **Extract stems**. When it's done, **Play** opens a stem in your default player and **Show** opens it in Explorer.
+
+The device badge in the top-right corner shows what the AI engine runs on: your GPU's name, or "CPU only". Your model, format and folder choices are remembered.
+
+Existing files are never overwritten: a second run of the same video saves `… (Acapella) (2).wav`. Temporary files are deleted automatically, even if a job fails.
 
 ## System requirements
 
-These are estimates; actual times depend heavily on your processor and the song's length.
+Times are estimates; they depend on your hardware and the song's length.
 
-| | Minimum (runs, slowly) | Recommended |
+| | GPU version | CPU version |
 |---|---|---|
-| OS | Windows 10/11 64-bit (or macOS/Linux from source) | Windows 10/11 64-bit |
-| Processor | 4 cores, from the last ~8 years | 6–8 cores (Ryzen 5/7, Core i5/i7, 2018 or newer) |
-| RAM | 8 GB | 16 GB |
-| Disk | ~2 GB free (app is ~1.5 GB extracted) | SSD, 5 GB+ free if you keep lots of WAV stems |
-| Internet | Needed to download from YouTube | |
+| OS | Windows 10/11 64-bit | Windows 10/11 64-bit |
+| Graphics | NVIDIA GTX 900-series or newer, 4 GB+ video memory (8 GB+ ideal for the Best models), current driver | Not used |
+| Processor | Any recent 4+ core | 6–8 cores recommended (4 minimum) |
+| RAM | 16 GB recommended | 8 GB minimum, 16 GB recommended |
+| Disk | ~6 GB for the app, plus ~1.5 GB for the Best models | ~2 GB, plus ~1.5 GB for the Best models |
+| Internet | Needed to download from YouTube and, once, the Best models | Same |
 
-**What to expect with the CPU version:**
+**What to expect:**
 
-- **First start:** 10–30 seconds while the AI engine (PyTorch) loads.
-- **Separation:** roughly 2–6 minutes for a 4-minute song on a recommended PC, 10+ minutes on a minimum-spec PC. Time grows with song length.
-- **Your PC slows down while it works:** separation uses most of the processor.
-- **Memory:** usually peaks at a few GB; very long tracks (30+ minutes) use more.
+- **GPU, Best models:** roughly seconds to a minute for a 4-minute song on an RTX card.
+- **CPU, Fast model:** roughly 2–6 minutes for a 4-minute song. **CPU, Best models:** several times longer, possibly 15–30+ minutes.
+- **Fast model on the GPU version** runs on the CPU (it uses ONNX Runtime, not PyTorch). It's still quick.
+- **Startup:** the window opens right away; the AI engine loads in the background (the device badge says "Loading engine…" until it's ready).
 - **File sizes:** WAV is about 10 MB per minute of audio, so a 4-minute song gives two ~40 MB stems. MP3 (320 kbps) is about 2.4 MB per minute.
 
-**Models:** Inst HQ 3 and Kim_Vocal_2 take about the same time. UVR HP-Vocal is usually somewhat faster on CPU.
+## Running from source
 
-**GPU option (from source):** an NVIDIA card with 4 GB+ video memory (GTX 1650 or better, ideally RTX) and a current driver cuts a song down to seconds. Apple Silicon Macs also use their GPU automatically when run from source.
-
-## Setup
-
-These steps are for running from source (any OS, or to use an NVIDIA GPU). On Windows you can skip them and use the [download](#download-for-windows) instead.
-
-You need **Python 3.10 or newer** and **FFmpeg**.
+For macOS/Linux, or to develop the app. You need **Python 3.10 or newer** and **FFmpeg**.
 
 ### 1. Install FFmpeg
 
@@ -58,8 +77,6 @@ You need **Python 3.10 or newer** and **FFmpeg**.
 | macOS | `brew install ffmpeg` |
 | Ubuntu/Debian | `sudo apt install ffmpeg` |
 
-Check it works: `ffmpeg -version`. The app also checks on startup and warns you in the log if it's missing.
-
 On Linux you may also need Tk for the GUI: `sudo apt install python3-tk`.
 
 ### 2. Create a virtual environment and install
@@ -68,51 +85,34 @@ On Linux you may also need Tk for the GUI: `sudo apt install python3-tk`.
 python -m venv .venv
 ```
 
-Activate it (Windows: `.venv\Scripts\activate`, macOS/Linux: `source .venv/bin/activate`), then:
+Activate it (Windows: `.venv\Scripts\activate`, macOS/Linux: `source .venv/bin/activate`). For an NVIDIA GPU, install the CUDA build of PyTorch first:
+
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+```
+
+Then:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. (Optional) NVIDIA GPU acceleration
+Apple Silicon Macs use the GPU automatically.
 
-CPU works everywhere but a song takes a few minutes; a CUDA GPU makes it take seconds. Install a CUDA build of PyTorch **before** the requirements, and use the GPU build of audio-separator:
-
-```bash
-pip install torch --index-url https://download.pytorch.org/whl/cu124
-```
-
-```bash
-pip install customtkinter yt-dlp "audio-separator[gpu]"
-```
-
-Pick the CUDA version that matches your driver at <https://pytorch.org/get-started/locally/>. The log shows "GPU detected" when it's in use. Apple Silicon Macs use the GPU (MPS) automatically.
-
-### 4. Run
+### 3. Run
 
 ```bash
 python app.py
 ```
 
-## Using it
-
-1. Paste a YouTube link (or click **Paste**).
-2. Choose a model:
-   - **UVR-MDX-NET Inst HQ 3**: best all-round, especially clean instrumentals (default).
-   - **Kim_Vocal_2**: tuned for clean acapellas.
-   - **UVR HP-Vocal (VR architecture)**: the classic UVR "HP" vocal model (`4_HP-Vocal-UVR.pth`).
-3. Choose **WAV** (lossless) or **MP3** (320 kbps), and an output folder.
-4. Click **Start Extraction**. Follow progress in the log, then click **Open Output Folder**.
-
-**First run:** each model is downloaded once (roughly 50–200 MB) into the `models/` folder next to `app.py`, and reused after that. The first start of the AI engine is also slower while PyTorch loads.
-
-Temporary downloads go to your system temp folder and are deleted automatically, even if a job fails. Existing files are never overwritten: a second run of the same video saves `… (Acapella) (2).wav`.
+From source, stems are saved to `output/` and models to `models/` next to `app.py`.
 
 ## Troubleshooting
 
-- **"FFmpeg was not found"**: install FFmpeg (step 1) and restart the app from a new terminal.
-- **Download errors on videos that play fine**: YouTube changes often; update yt-dlp with `pip install -U yt-dlp`.
+- **"FFmpeg was not found"** (from source): install FFmpeg and restart the app from a new terminal.
+- **Download errors on videos that play fine**: YouTube changes often; update yt-dlp (`pip install -U yt-dlp` from source; for the Windows app, a new release).
 - **Age-restricted / private videos** can't be downloaded without signing in, so they're refused with a message.
-- To use another UVR model, add it to `UVR_MODELS` at the top of `app.py`. List all available models with `audio-separator --list_models`.
+- **Device badge says "CPU only" on the GPU version:** update your NVIDIA driver. Open **Show details** in the app for the reason.
+- To use another UVR model, add it to `MODELS` at the top of `app.py`. List all available models with `audio-separator --list_models`.
 
 Only download content you have the rights to use.

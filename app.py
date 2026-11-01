@@ -12,8 +12,12 @@ Pipeline (runs on a background thread so the window never freezes):
        stream and convert it to WAV in a temporary folder.
     3. audio-separator: load the chosen UVR model and split the WAV into
        Vocals and Instrumental.
-    4. Move the stems to <output>/acapellas/ and <output>/instrumentals/,
+    4. Copy the stems to <output>/acapellas/ and <output>/instrumentals/,
        named after the video title, and delete the temporary files.
+
+The AI engine (PyTorch) takes a while to import, so it starts loading in the
+background as soon as the window opens. An NVIDIA GPU is used automatically
+when the CUDA build of PyTorch is installed.
 
 The worker thread never touches a widget. It puts messages on a queue, and
 the GUI drains that queue every 100 ms from the Tk main loop.
@@ -23,6 +27,7 @@ Run:  python app.py
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import queue
@@ -32,10 +37,12 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+import tkinter as tk
 from tkinter import filedialog
 
 try:
@@ -68,30 +75,60 @@ if FROZEN:
     # so yt-dlp, pydub and audio-separator all find them.
     bundle_dirs = [APP_DIR, Path(getattr(sys, "_MEIPASS", APP_DIR))]
     os.environ["PATH"] = os.pathsep.join(str(d) for d in bundle_dirs) + os.pathsep + os.environ.get("PATH", "")
-DEFAULT_OUTPUT_DIR = APP_DIR / "output"
+
+# The installed app saves to the user's Music folder; from source, next to the script.
+DEFAULT_OUTPUT_DIR = (Path.home() / "Music" / "YT Stem Extractor") if FROZEN else APP_DIR / "output"
 # UVR models are downloaded here on first use and reused after that.
 MODEL_DIR = APP_DIR / "models"
+# Remembers the chosen model, format and output folder between runs.
+SETTINGS_FILE = APP_DIR / "settings.json"
 
-# Display name -> model file name known to audio-separator.
-# (List every model audio-separator knows with:  audio-separator --list_models)
-UVR_MODELS = {
-    "UVR-MDX-NET Inst HQ 3 (best instrumentals)": "UVR-MDX-NET-Inst_HQ_3.onnx",
-    "Kim_Vocal_2 (best acapellas)": "Kim_Vocal_2.onnx",
-    "UVR HP-Vocal (VR architecture)": "4_HP-Vocal-UVR.pth",
-}
 
-OUTPUT_FORMATS = {
-    "WAV (lossless, maximum quality)": "WAV",
-    "MP3 (320 kbps)": "MP3",
-}
+@dataclass(frozen=True)
+class ModelOption:
+    label: str        # shown on the model selector
+    filename: str     # model file name known to audio-separator
+    description: str  # one line shown under the selector
+
+
+# Ranked by audio-separator's published benchmark (median SDR over 40 songs).
+# List every model audio-separator knows with:  audio-separator --list_models
+MODELS = [
+    ModelOption("Best instrumental", "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+                "BS-Roformer 1297  ·  top-rated instrumentals  ·  large one-time download"),
+    ModelOption("Best acapella", "model_bs_roformer_ep_368_sdr_12.9628.ckpt",
+                "BS-Roformer 1296  ·  top-rated acapellas  ·  large one-time download"),
+    ModelOption("Fast", "UVR-MDX-NET-Inst_HQ_3.onnx",
+                "MDX-Net Inst HQ 3  ·  good quality in a fraction of the time"),
+]
+MODELS_BY_LABEL = {m.label: m for m in MODELS}
+
+OUTPUT_FORMATS = ["WAV", "MP3"]  # WAV is lossless; MP3 is written at 320 kbps
 
 # Share of the progress bar given to each stage.
 DOWNLOAD_SHARE = 0.40   # 0 % -> 40 %  : yt-dlp download
 MODEL_LOAD_AT = 0.45    # 45 %         : model loaded, separation starts
 SEPARATED_AT = 0.95     # 95 %         : stems written, moving files
 
-ACCENT = "#1f9d55"
-ACCENT_HOVER = "#17804a"
+# Design tokens: a near-black neutral palette with one green accent.
+BG = "#0B0B0E"
+SURFACE = "#141418"
+FIELD = "#1C1C22"
+BORDER = "#2A2A32"
+TEXT = "#F4F4F5"
+MUTED = "#8E8E9A"
+SUBTLE = "#55555F"
+ACCENT = "#22C55E"
+ACCENT_HOVER = "#1EAE53"
+ON_ACCENT = "#04130A"
+DANGER = "#F87171"
+
+if sys.platform.startswith("win"):
+    UI_FONT, MONO_FONT = "Segoe UI", "Cascadia Mono"
+elif sys.platform == "darwin":
+    UI_FONT, MONO_FONT = "Helvetica Neue", "Menlo"
+else:
+    UI_FONT, MONO_FONT = "DejaVu Sans", "DejaVu Sans Mono"
 
 
 # --------------------------------------------------------------------------- #
@@ -145,15 +182,47 @@ def ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
 
 
-def open_in_file_explorer(path: Path) -> None:
-    """Open a folder in Explorer / Finder / the Linux file manager."""
-    path.mkdir(parents=True, exist_ok=True)
+def open_path(path: Path) -> None:
+    """Open a file with its default app, or a folder in the file manager."""
     if sys.platform.startswith("win"):
         os.startfile(path)  # type: ignore[attr-defined]  # Windows only
     elif sys.platform == "darwin":
         subprocess.Popen(["open", str(path)])
     else:
         subprocess.Popen(["xdg-open", str(path)])
+
+
+def reveal_in_file_manager(path: Path) -> None:
+    """Show a file selected in Explorer (elsewhere: open its folder)."""
+    if sys.platform.startswith("win"):
+        subprocess.Popen(["explorer", "/select,", str(path)])
+    else:
+        open_path(path.parent)
+
+
+def load_settings() -> dict:
+    try:
+        return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}  # first run, or unreadable: use defaults
+
+
+def save_settings(settings: dict) -> None:
+    try:
+        SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    except Exception:
+        pass  # settings are a convenience; never fail a run over them
+
+
+def detect_device() -> str:
+    """Import the AI engine and describe what it will run on, e.g. 'RTX 4070 SUPER'."""
+    import torch
+    import audio_separator.separator  # noqa: F401  # the slow import we want done early
+    if torch.cuda.is_available():
+        return torch.cuda.get_device_name(0).replace("NVIDIA ", "").replace("GeForce ", "")
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "Apple GPU"
+    return "CPU"
 
 
 # --------------------------------------------------------------------------- #
@@ -183,13 +252,15 @@ class ExtractionPipeline:
     """
     Download + separation logic.
 
-    `log(str)` and `progress(float 0..1 or None)` are callbacks supplied by the
-    GUI; progress(None) means "busy, but the amount is unknown".
+    `log(str)`, `progress(float 0..1 or None)` and `stage(name, detail)` are
+    callbacks supplied by the GUI; progress(None) means "busy, but the amount is
+    unknown". Stages are "download", "separate" and "save".
     """
 
-    def __init__(self, log, progress):
+    def __init__(self, log, progress, stage=lambda _name, _detail: None):
         self.log = log
         self.progress = progress
+        self.stage = stage
 
     # ---- Step 1: download --------------------------------------------------
 
@@ -266,6 +337,7 @@ class ExtractionPipeline:
         }
 
         self.log("Downloading audio...")
+        self.stage("download", "Downloading audio")
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
@@ -300,7 +372,8 @@ class ExtractionPipeline:
 
     def separate(self, wav: Path, job: Job, stems_dir: Path) -> list[Path]:
         """Run UVR on `wav`, writing stems into `stems_dir`. Returns their paths."""
-        self.log("Loading the AI engine (PyTorch)... the first start can take a while.")
+        self.log("Loading the AI engine (PyTorch)...")
+        self.stage("separate", "Loading the AI engine")
         self.progress(None)
         try:
             from audio_separator.separator import Separator
@@ -311,13 +384,8 @@ class ExtractionPipeline:
             ) from exc
 
         try:
-            import torch
-            if torch.cuda.is_available():
-                self.log(f"GPU detected: {torch.cuda.get_device_name(0)} (CUDA).")
-            elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
-                self.log("Apple Silicon GPU detected (MPS).")
-            else:
-                self.log("No GPU detected: running on CPU (slower, but works).")
+            device = detect_device()
+            self.log(f"Running on: {device}" + (" (slower; an NVIDIA GPU is much faster)" if device == "CPU" else ""))
         except Exception:
             pass  # device info is a nicety only
 
@@ -333,13 +401,16 @@ class ExtractionPipeline:
         model_cached = (MODEL_DIR / job.model_file).exists()
         self.log(f"Loading UVR model: {job.model_file}"
                  + ("" if model_cached else "  (first use: downloading model, please wait)"))
+        self.stage("separate", "Loading model" if model_cached
+                   else "Downloading model (first use only)")
         try:
             separator.load_model(model_filename=job.model_file)
         except Exception as exc:
             raise PipelineError(f"Could not load model '{job.model_file}': {exc}") from exc
         self.progress(MODEL_LOAD_AT)
 
-        self.log("Separating stems... (this is the slow part; a few minutes on CPU)")
+        self.log("Separating stems...")
+        self.stage("separate", "Separating stems")
         self.progress(None)
         try:
             produced = separator.separate(str(wav))
@@ -358,9 +429,10 @@ class ExtractionPipeline:
 
     def file_stems(self, stems: list[Path], base_name: str, output_dir: Path) -> list[Path]:
         """
-        Move each stem into acapellas/ or instrumentals/ and name it after the video.
+        Copy each stem into acapellas/ or instrumentals/ and name it after the video.
         audio-separator names files like 'source_(Vocals)_<model>.wav'.
         """
+        self.stage("save", "Saving stems")
         acapella_dir = output_dir / "acapellas"
         instrumental_dir = output_dir / "instrumentals"
         acapella_dir.mkdir(parents=True, exist_ok=True)
@@ -369,10 +441,12 @@ class ExtractionPipeline:
         saved = []
         for stem in stems:
             label = stem.name.lower()
-            if "(vocals)" in label:
-                target = acapella_dir / f"{base_name} (Acapella){stem.suffix}"
-            elif "(instrumental)" in label:
+            # Check instrumental first: "(no vocals)" also contains "vocals)".
+            # Roformer models call the instrumental stem "other".
+            if any(t in label for t in ("(instrumental)", "(other)", "(no vocals)", "(no_vocals)")):
                 target = instrumental_dir / f"{base_name} (Instrumental){stem.suffix}"
+            elif "(vocals)" in label:
+                target = acapella_dir / f"{base_name} (Acapella){stem.suffix}"
             else:
                 # A model with other stem names: keep it, unsorted, with its stem label.
                 stem_label = re.search(r"_\(([^)]+)\)_", stem.name)
@@ -418,134 +492,230 @@ class ExtractionPipeline:
 # GUI
 # --------------------------------------------------------------------------- #
 
+STAGES = [("download", "Download"), ("separate", "Separate"), ("save", "Save")]
+
+
+def short_path(path: Path, limit: int = 48) -> str:
+    """Shorten a long path from the left so the end (the folder name) stays visible."""
+    text = str(path)
+    return text if len(text) <= limit else "…" + text[-(limit - 1):]
+
+
 class StemExtractorApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("green")
 
         self.title(APP_TITLE)
-        self.geometry("820x700")
-        self.minsize(680, 600)
+        self.configure(fg_color=BG)
+        self.geometry("780x840")
+        self.minsize(660, 760)
 
-        self.output_dir = DEFAULT_OUTPUT_DIR
-        self.events: queue.Queue = queue.Queue()  # worker -> GUI messages
+        # Restore last session's choices.
+        self.settings = load_settings()
+        self.output_dir = Path(self.settings.get("output_dir") or DEFAULT_OUTPUT_DIR)
+        model_label = self.settings.get("model")
+        self.model_label = model_label if model_label in MODELS_BY_LABEL else MODELS[0].label
+        fmt = self.settings.get("format")
+        self.output_format = fmt if fmt in OUTPUT_FORMATS else OUTPUT_FORMATS[0]
+
+        self.events: queue.Queue = queue.Queue()  # worker threads -> GUI messages
         self.worker: threading.Thread | None = None
+        self.job_started_at: float | None = None
         self.progress_indeterminate = False
+        self.details_visible = False
+
+        self.fonts = {
+            "eyebrow": ctk.CTkFont(UI_FONT, 11, "bold"),
+            "title": ctk.CTkFont(UI_FONT, 26, "bold"),
+            "label": ctk.CTkFont(UI_FONT, 12, "bold"),
+            "body": ctk.CTkFont(UI_FONT, 13),
+            "small": ctk.CTkFont(UI_FONT, 12),
+            "button": ctk.CTkFont(UI_FONT, 15, "bold"),
+            "mono": ctk.CTkFont(MONO_FONT, 11),
+        }
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(4, weight=1)  # the log box takes the spare height
+        self.grid_rowconfigure(0, weight=1)
+        self.body = ctk.CTkFrame(self, fg_color="transparent")
+        self.body.grid(row=0, column=0, sticky="nsew", padx=32, pady=(28, 24))
+        self.body.grid_columnconfigure(0, weight=1)
+        self.body.grid_rowconfigure(7, weight=1)  # the details log takes spare height
 
         self._build_header()
-        self._build_url_input()
-        self._build_settings()
-        self._build_actions()
-        self._build_feedback()
+        self._build_source()
+        self._build_options()
+        self._build_extract_button()
+        self._build_progress()
+        self._build_results()
+        self._build_footer()
 
-        self.log(f"Ready. Stems will be saved to: {self.output_dir}")
+        self.log(f"Stems will be saved to: {self.output_dir}")
         if not ffmpeg_available():
-            self.log("WARNING: FFmpeg not found on PATH. Install it before extracting (see README).")
+            self._set_status("FFmpeg is missing. Install it before extracting (see README).", DANGER)
+            self.log("WARNING: FFmpeg not found on PATH.")
 
+        # Import the AI engine now, while the user is still pasting a link.
+        threading.Thread(target=self._preload_engine, daemon=True).start()
         self.after(100, self._drain_events)
 
-    # ---- Layout -----------------------------------------------------------
+    # ---- Building blocks ---------------------------------------------------
+
+    def _card(self, row: int, pady=(0, 14)) -> ctk.CTkFrame:
+        card = ctk.CTkFrame(self.body, fg_color=SURFACE, corner_radius=14,
+                            border_width=1, border_color=BORDER)
+        card.grid(row=row, column=0, sticky="ew", pady=pady)
+        card.grid_columnconfigure(0, weight=1)
+        return card
+
+    def _label(self, parent, text, font="label", color=MUTED, **kw) -> ctk.CTkLabel:
+        return ctk.CTkLabel(parent, text=text, font=self.fonts[font], text_color=color,
+                            anchor="w", **kw)
+
+    def _ghost_button(self, parent, text, command, width=76, height=34, color=TEXT):
+        return ctk.CTkButton(parent, text=text, command=command, width=width, height=height,
+                             corner_radius=10, fg_color="transparent", hover_color=FIELD,
+                             border_width=1, border_color=BORDER, text_color=color,
+                             font=self.fonts["small"])
+
+    def _segmented(self, parent, values, value, command):
+        seg = ctk.CTkSegmentedButton(
+            parent, values=values, command=command, height=38, corner_radius=10,
+            font=self.fonts["body"], fg_color=FIELD, unselected_color=FIELD,
+            unselected_hover_color="#25252D", selected_color="#34343F",
+            selected_hover_color="#3B3B47", text_color=TEXT, text_color_disabled=SUBTLE)
+        seg.set(value)
+        return seg
+
+    # ---- Layout ------------------------------------------------------------
 
     def _build_header(self):
-        header = ctk.CTkFrame(self, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", padx=24, pady=(20, 4))
-        ctk.CTkLabel(header, text=APP_TITLE,
-                     font=ctk.CTkFont(size=24, weight="bold")).pack(anchor="w")
-        ctk.CTkLabel(header, text="YouTube link in, Acapella + Instrumental out. Powered by UVR5.",
-                     text_color=("gray40", "gray65")).pack(anchor="w")
+        header = ctk.CTkFrame(self.body, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 22))
+        header.grid_columnconfigure(0, weight=1)
 
-    def _build_url_input(self):
-        frame = ctk.CTkFrame(self)
-        frame.grid(row=1, column=0, sticky="ew", padx=24, pady=(12, 6))
-        frame.grid_columnconfigure(0, weight=1)
+        self._label(header, "UVR STUDIO", font="eyebrow", color=ACCENT).grid(row=0, column=0, sticky="w")
+        self._label(header, "YT Stem Extractor", font="title", color=TEXT).grid(row=1, column=0, sticky="w")
 
-        ctk.CTkLabel(frame, text="YouTube link", font=ctk.CTkFont(weight="bold")).grid(
-            row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 4))
+        # Device chip: shows what the AI engine will run on once it has loaded.
+        chip = ctk.CTkFrame(header, fg_color=SURFACE, corner_radius=14,
+                            border_width=1, border_color=BORDER)
+        chip.grid(row=0, column=1, rowspan=2, sticky="e")
+        self.device_dot = ctk.CTkLabel(chip, text="●", text_color=SUBTLE, font=self.fonts["small"])
+        self.device_dot.pack(side="left", padx=(12, 6), pady=5)
+        self.device_label = self._label(chip, "Loading engine…", font="small", color=MUTED)
+        self.device_label.pack(side="left", padx=(0, 14), pady=5)
+
+    def _build_source(self):
+        card = self._card(row=1)
+        self._label(card, "YouTube link").grid(row=0, column=0, columnspan=2, sticky="w",
+                                               padx=20, pady=(16, 8))
         self.url_entry = ctk.CTkEntry(
-            frame, height=42, font=ctk.CTkFont(size=14),
-            placeholder_text="https://www.youtube.com/watch?v=...")
-        self.url_entry.grid(row=1, column=0, sticky="ew", padx=(14, 6), pady=(0, 14))
+            card, height=46, corner_radius=10, font=self.fonts["body"],
+            fg_color=FIELD, border_color=BORDER, border_width=1, text_color=TEXT,
+            placeholder_text="Paste a youtube.com or youtu.be link",
+            placeholder_text_color=SUBTLE)
+        self.url_entry.grid(row=1, column=0, sticky="ew", padx=(20, 8), pady=(0, 20))
         self.url_entry.bind("<Return>", lambda _e: self.start_extraction())
 
-        self.paste_button = ctk.CTkButton(frame, text="Paste", width=80, height=42,
-                                          fg_color="gray30", hover_color="gray25",
-                                          command=self._paste_url)
-        self.paste_button.grid(row=1, column=1, padx=(0, 14), pady=(0, 14))
+        self.paste_button = self._ghost_button(card, "Paste", self._paste_url, height=46)
+        self.paste_button.grid(row=1, column=1, padx=(0, 20), pady=(0, 20))
 
-    def _build_settings(self):
-        frame = ctk.CTkFrame(self)
-        frame.grid(row=2, column=0, sticky="ew", padx=24, pady=6)
-        frame.grid_columnconfigure((1, 3), weight=1)
+    def _build_options(self):
+        card = self._card(row=2)
+        card.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(frame, text="Settings", font=ctk.CTkFont(weight="bold")).grid(
-            row=0, column=0, columnspan=4, sticky="w", padx=14, pady=(12, 6))
+        self._label(card, "Model").grid(row=0, column=0, columnspan=2, sticky="w",
+                                        padx=20, pady=(16, 8))
+        self.model_seg = self._segmented(card, [m.label for m in MODELS], self.model_label,
+                                         self._on_model_change)
+        self.model_seg.grid(row=1, column=0, columnspan=2, sticky="ew", padx=20)
+        self.model_desc = self._label(card, MODELS_BY_LABEL[self.model_label].description,
+                                      font="small", color=MUTED)
+        self.model_desc.grid(row=2, column=0, columnspan=2, sticky="w", padx=20, pady=(8, 16))
 
-        ctk.CTkLabel(frame, text="UVR model").grid(row=1, column=0, sticky="w", padx=(14, 8))
-        self.model_var = ctk.StringVar(value=next(iter(UVR_MODELS)))
-        self.model_menu = ctk.CTkOptionMenu(frame, variable=self.model_var,
-                                            values=list(UVR_MODELS), dynamic_resizing=False)
-        self.model_menu.grid(row=1, column=1, sticky="ew", padx=(0, 16), pady=4)
+        tk.Frame(card, height=1, bg=BORDER, highlightthickness=0).grid(row=3, column=0, columnspan=2,
+                                                           sticky="ew", padx=20)
 
-        ctk.CTkLabel(frame, text="Format").grid(row=1, column=2, sticky="w", padx=(0, 8))
-        self.format_var = ctk.StringVar(value=next(iter(OUTPUT_FORMATS)))
-        self.format_menu = ctk.CTkOptionMenu(frame, variable=self.format_var,
-                                             values=list(OUTPUT_FORMATS), dynamic_resizing=False)
-        self.format_menu.grid(row=1, column=3, sticky="ew", padx=(0, 14), pady=4)
+        # Format (left) and output folder (right) share one row.
+        self._label(card, "Format").grid(row=4, column=0, sticky="w", padx=20, pady=(16, 8))
+        self._label(card, "Save to").grid(row=4, column=1, sticky="w", padx=(24, 20), pady=(16, 8))
 
-        ctk.CTkLabel(frame, text="Save to").grid(row=2, column=0, sticky="w", padx=(14, 8),
-                                                 pady=(8, 14))
-        self.output_label = ctk.CTkLabel(frame, text=str(self.output_dir), anchor="w",
-                                         text_color=("gray30", "gray75"))
-        self.output_label.grid(row=2, column=1, columnspan=2, sticky="ew", pady=(8, 14))
-        self.browse_button = ctk.CTkButton(frame, text="Choose folder...", width=130,
-                                           fg_color="gray30", hover_color="gray25",
-                                           command=self._choose_output_dir)
-        self.browse_button.grid(row=2, column=3, sticky="e", padx=(0, 14), pady=(8, 14))
+        self.format_seg = self._segmented(card, OUTPUT_FORMATS, self.output_format,
+                                          self._on_format_change)
+        self.format_seg.configure(width=150)
+        self.format_seg.grid(row=5, column=0, sticky="w", padx=20, pady=(0, 20))
 
-    def _build_actions(self):
+        folder = ctk.CTkFrame(card, fg_color=FIELD, corner_radius=10, height=38,
+                              border_width=1, border_color=BORDER)
+        folder.grid(row=5, column=1, sticky="ew", padx=(24, 20), pady=(0, 20))
+        folder.grid_columnconfigure(0, weight=1)
+        self.output_label = self._label(folder, short_path(self.output_dir), font="small", color=TEXT)
+        self.output_label.grid(row=0, column=0, sticky="ew", padx=(12, 4), pady=6)
+        self.change_button = ctk.CTkButton(
+            folder, text="Change", width=64, height=28, corner_radius=8,
+            fg_color="transparent", hover_color="#25252D", text_color=ACCENT,
+            font=self.fonts["label"], command=self._choose_output_dir)
+        self.change_button.grid(row=0, column=1, padx=(0, 5), pady=4)
+
+    def _build_extract_button(self):
         self.start_button = ctk.CTkButton(
-            self, text="Start Extraction", height=50,
-            font=ctk.CTkFont(size=16, weight="bold"),
-            fg_color=ACCENT, hover_color=ACCENT_HOVER,
-            command=self.start_extraction)
-        self.start_button.grid(row=3, column=0, sticky="ew", padx=24, pady=(10, 6))
+            self.body, text="Extract stems", height=52, corner_radius=12,
+            font=self.fonts["button"], fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            text_color=ON_ACCENT, text_color_disabled=MUTED, command=self.start_extraction)
+        self.start_button.grid(row=3, column=0, sticky="ew", pady=(4, 18))
 
-    def _build_feedback(self):
-        frame = ctk.CTkFrame(self)
-        frame.grid(row=4, column=0, sticky="nsew", padx=24, pady=(6, 20))
-        frame.grid_columnconfigure(0, weight=1)
-        frame.grid_rowconfigure(2, weight=1)
+    def _build_progress(self):
+        card = self._card(row=4)
+        card.grid_columnconfigure(0, weight=1)
 
-        status_row = ctk.CTkFrame(frame, fg_color="transparent")
-        status_row.grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 4))
-        status_row.grid_columnconfigure(0, weight=1)
-        self.status_label = ctk.CTkLabel(status_row, text="Idle", anchor="w",
-                                         font=ctk.CTkFont(weight="bold"))
-        self.status_label.grid(row=0, column=0, sticky="w")
-        self.percent_label = ctk.CTkLabel(status_row, text="0%", anchor="e")
-        self.percent_label.grid(row=0, column=1, sticky="e")
+        steps = ctk.CTkFrame(card, fg_color="transparent")
+        steps.grid(row=0, column=0, columnspan=2, sticky="w", padx=20, pady=(16, 10))
+        self.step_widgets = {}
+        for i, (key, name) in enumerate(STAGES):
+            if i:
+                tk.Frame(steps, width=28, height=1, bg=BORDER, highlightthickness=0).pack(side="left", padx=10)
+            dot = ctk.CTkLabel(steps, text="●", text_color=SUBTLE, font=self.fonts["small"])
+            dot.pack(side="left", padx=(0, 6))
+            label = self._label(steps, name, font="small", color=SUBTLE)
+            label.pack(side="left")
+            self.step_widgets[key] = (dot, label)
 
-        self.progress_bar = ctk.CTkProgressBar(frame, height=12, progress_color=ACCENT)
-        self.progress_bar.grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 10))
-        self.progress_bar.set(0)
+        self.status_label = self._label(card, "Ready", font="body", color=TEXT)
+        self.status_label.grid(row=1, column=0, sticky="w", padx=20)
+        self.elapsed_label = self._label(card, "", font="small", color=MUTED, justify="right")
+        self.elapsed_label.grid(row=1, column=1, sticky="e", padx=20)
 
-        # Terminal-style log: monospace, read-only, scrolls automatically.
-        self.log_box = ctk.CTkTextbox(frame, font=ctk.CTkFont(family="Consolas", size=12),
-                                      fg_color=("gray92", "#0d1117"),
-                                      text_color=("gray10", "#c9d1d9"), wrap="word")
-        self.log_box.grid(row=2, column=0, sticky="nsew", padx=14)
+        self.progress_bar = ctk.CTkProgressBar(card, height=6, corner_radius=3,
+                                               fg_color=FIELD, progress_color=ACCENT)
+        self.progress_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=20, pady=(10, 20))
+        self._set_progress(0)
+
+    def _build_results(self):
+        # Filled in when a job finishes; hidden until then.
+        self.results_card = self._card(row=5)
+        self.results_card.grid_remove()
+
+    def _build_footer(self):
+        footer = ctk.CTkFrame(self.body, fg_color="transparent")
+        footer.grid(row=6, column=0, sticky="ew")
+        footer.grid_columnconfigure(1, weight=1)
+        link = dict(fg_color="transparent", hover_color=SURFACE, text_color=MUTED,
+                    font=self.fonts["small"], height=30, corner_radius=8)
+        self.details_button = ctk.CTkButton(footer, text="Show details", width=110,
+                                            command=self._toggle_details, **link)
+        self.details_button.grid(row=0, column=0, sticky="w")
+        ctk.CTkButton(footer, text="Open output folder", width=140,
+                      command=lambda: self._safe_open(self.output_dir, folder=True),
+                      **link).grid(row=0, column=2, sticky="e")
+
+        # Technical log, hidden by default to keep the window clean.
+        self.log_box = ctk.CTkTextbox(self.body, font=self.fonts["mono"], fg_color=SURFACE,
+                                      border_width=1, border_color=BORDER, corner_radius=12,
+                                      text_color=MUTED, wrap="word")
         self.log_box.configure(state="disabled")
 
-        self.open_button = ctk.CTkButton(frame, text="Open Output Folder", height=36,
-                                         command=lambda: self._safe_open(self.output_dir),
-                                         state="disabled")
-        self.open_button.grid(row=3, column=0, sticky="e", padx=14, pady=12)
-
-    # ---- UI actions -------------------------------------------------------
+    # ---- UI actions --------------------------------------------------------
 
     def _paste_url(self):
         try:
@@ -555,27 +725,55 @@ class StemExtractorApp(ctk.CTk):
         self.url_entry.delete(0, "end")
         self.url_entry.insert(0, text)
 
+    def _on_model_change(self, label):
+        self.model_label = label
+        self.model_desc.configure(text=MODELS_BY_LABEL[label].description)
+        self._remember()
+
+    def _on_format_change(self, fmt):
+        self.output_format = fmt
+        self._remember()
+
     def _choose_output_dir(self):
         chosen = filedialog.askdirectory(initialdir=str(self.output_dir),
                                          title="Choose where to save the stems")
         if chosen:
             self.output_dir = Path(chosen)
-            self.output_label.configure(text=str(self.output_dir))
+            self.output_label.configure(text=short_path(self.output_dir))
             self.log(f"Output folder set to: {self.output_dir}")
+            self._remember()
 
-    def _safe_open(self, path: Path):
+    def _remember(self):
+        self.settings.update(model=self.model_label, format=self.output_format,
+                             output_dir=str(self.output_dir))
+        save_settings(self.settings)
+
+    def _toggle_details(self):
+        self.details_visible = not self.details_visible
+        if self.details_visible:
+            self.log_box.grid(row=7, column=0, sticky="nsew", pady=(8, 0))
+            self.details_button.configure(text="Hide details")
+            self._fit_height()
+        else:
+            self.log_box.grid_remove()
+            self.details_button.configure(text="Show details")
+
+    def _safe_open(self, path: Path, folder=False, reveal=False):
         try:
-            open_in_file_explorer(path)
+            if folder:
+                path.mkdir(parents=True, exist_ok=True)
+            (reveal_in_file_manager if reveal else open_path)(path)
         except Exception as exc:
-            self.log(f"Could not open the folder: {exc}")
+            self.log(f"Could not open {path}: {exc}")
 
     def _set_running(self, running: bool):
         state = "disabled" if running else "normal"
-        for widget in (self.url_entry, self.paste_button, self.model_menu,
-                       self.format_menu, self.browse_button):
+        for widget in (self.url_entry, self.paste_button, self.model_seg,
+                       self.format_seg, self.change_button):
             widget.configure(state=state)
-        self.start_button.configure(state=state,
-                                    text="Working..." if running else "Start Extraction")
+        self.start_button.configure(
+            state=state, text="Extracting…" if running else "Extract stems",
+            fg_color=FIELD if running else ACCENT)
 
     def start_extraction(self):
         if self.worker and self.worker.is_alive():
@@ -583,33 +781,39 @@ class StemExtractorApp(ctk.CTk):
 
         url = self.url_entry.get().strip()
         if not url:
-            self.log("Paste a YouTube link first.")
+            self._set_status("Paste a YouTube link first.", DANGER)
             self.url_entry.focus_set()
             return
 
-        job = Job(
-            url=url,
-            model_file=UVR_MODELS[self.model_var.get()],
-            output_format=OUTPUT_FORMATS[self.format_var.get()],
-            output_dir=self.output_dir,
-        )
+        job = Job(url=url, model_file=MODELS_BY_LABEL[self.model_label].filename,
+                  output_format=self.output_format, output_dir=self.output_dir)
 
         self._set_running(True)
-        self.open_button.configure(state="disabled")
+        self.results_card.grid_remove()
         self._set_progress(0)
-        self.status_label.configure(text="Working...")
+        self._set_stage(None)
+        self._set_status("Fetching video info…")
+        self.job_started_at = time.monotonic()
+        self._tick()
         self.log("-" * 60)
-        self.log(f"Starting: {url}")
+        self.log(f"Starting: {url}  [{job.model_file}, {job.output_format}]")
 
         self.worker = threading.Thread(target=self._worker_main, args=(job,), daemon=True)
         self.worker.start()
 
-    # ---- Worker thread (no widget access in here!) ------------------------
+    # ---- Worker threads (no widget access in here!) -----------------------
+
+    def _preload_engine(self):
+        try:
+            self.events.put(("engine", (True, detect_device())))
+        except Exception as exc:
+            self.events.put(("engine", (False, f"{type(exc).__name__}: {exc}")))
 
     def _worker_main(self, job: Job):
         pipeline = ExtractionPipeline(
             log=lambda msg: self.events.put(("log", msg)),
             progress=lambda value: self.events.put(("progress", value)),
+            stage=lambda name, detail: self.events.put(("stage", (name, detail))),
         )
         try:
             saved = pipeline.run(job)
@@ -631,24 +835,70 @@ class StemExtractorApp(ctk.CTk):
                     self.log(payload)
                 elif kind == "progress":
                     self._set_progress(payload)
+                elif kind == "stage":
+                    name, detail = payload
+                    self._set_stage(name)
+                    self._set_status(f"{detail}…")
+                elif kind == "engine":
+                    self._on_engine_ready(*payload)
                 elif kind == "error":
-                    self._finish(success=False)
+                    self._finish()
+                    self._set_progress(0)
+                    self._set_status(payload, DANGER)
                     self.log(f"ERROR: {payload}")
-                    self.status_label.configure(text="Failed")
                 elif kind == "done":
-                    self._finish(success=True)
+                    self._finish()
+                    self._set_progress(1.0)
+                    self._set_stage("done")
+                    self._set_status("Done. Your stems are ready.", ACCENT)
                     for path in payload:
                         self.log(f"Saved: {path}")
-                    self.log("Done!")
-                    self.status_label.configure(text="Done!")
+                    self._show_results(payload)
         except queue.Empty:
             pass
         self.after(100, self._drain_events)
 
-    def _finish(self, success: bool):
-        self._set_progress(1.0 if success else 0)
+    def _on_engine_ready(self, ok: bool, info: str):
+        if not ok:
+            self.device_dot.configure(text_color=DANGER)
+            self.device_label.configure(text="Engine error")
+            self.log(f"AI engine failed to load: {info}")
+            return
+        on_gpu = info != "CPU"
+        self.device_dot.configure(text_color=ACCENT if on_gpu else "#F5A524")
+        self.device_label.configure(text=info if on_gpu else "CPU only", text_color=TEXT)
+        self.log(f"AI engine ready on: {info}")
+
+    def _finish(self):
         self._set_running(False)
-        self.open_button.configure(state="normal")
+        self.job_started_at = None
+
+    def _tick(self):
+        """Update the elapsed-time label once a second while a job runs."""
+        if self.job_started_at is None:
+            return
+        secs = int(time.monotonic() - self.job_started_at)
+        self.elapsed_label.configure(text=f"{secs // 60}:{secs % 60:02d}")
+        self.after(1000, self._tick)
+
+    def _set_status(self, text: str, color: str = TEXT):
+        self.status_label.configure(text=text, text_color=color)
+
+    def _set_stage(self, current: str | None):
+        """Light up the step indicator: finished steps green, current white."""
+        keys = [k for k, _ in STAGES]
+        reached = len(keys) if current == "done" else (keys.index(current) if current in keys else -1)
+        for i, key in enumerate(keys):
+            dot, label = self.step_widgets[key]
+            if i < reached:
+                dot.configure(text_color=ACCENT)
+                label.configure(text_color=TEXT)
+            elif i == reached:
+                dot.configure(text_color=TEXT)
+                label.configure(text_color=TEXT)
+            else:
+                dot.configure(text_color=SUBTLE)
+                label.configure(text_color=SUBTLE)
 
     def _set_progress(self, value):
         """value in 0..1, or None for 'busy, unknown amount' (animated bar)."""
@@ -662,8 +912,41 @@ class StemExtractorApp(ctk.CTk):
             self.progress_bar.stop()
             self.progress_bar.configure(mode="determinate")
             self.progress_indeterminate = False
+        # At 0 the bar would still draw a small green dot; hide it.
+        self.progress_bar.configure(progress_color=ACCENT if value > 0 else FIELD)
         self.progress_bar.set(value)
-        self.percent_label.configure(text=f"{int(value * 100)}%")
+
+    def _fit_height(self):
+        """Grow the window (up to the screen size) when results or details need room."""
+        self.update_idletasks()
+        needed = self.winfo_reqheight()
+        limit = self.winfo_screenheight() - 80
+        if self.winfo_height() < needed:
+            self.geometry(f"{self.winfo_width()}x{min(needed, limit)}")
+
+    def _show_results(self, paths: list[Path]):
+        card = self.results_card
+        for child in card.winfo_children():
+            child.destroy()
+        card.grid_columnconfigure(1, weight=1)
+        self._label(card, "Your stems").grid(row=0, column=0, columnspan=4, sticky="w",
+                                             padx=20, pady=(16, 6))
+        # Acapella first, then instrumental, then anything else.
+        order = {"acapellas": 0, "instrumentals": 1}
+        for row, path in enumerate(sorted(paths, key=lambda p: order.get(p.parent.name, 2)), start=1):
+            kind = {"acapellas": "Acapella", "instrumentals": "Instrumental"}.get(path.parent.name, "Stem")
+            last = row == len(paths)
+            pady = (4, 18 if last else 4)
+            self._label(card, kind, font="label", color=TEXT, width=96).grid(
+                row=row, column=0, sticky="w", padx=(20, 8), pady=pady)
+            self._label(card, path.name, font="small", color=MUTED).grid(
+                row=row, column=1, sticky="ew", pady=pady)
+            self._ghost_button(card, "▶  Play", lambda p=path: self._safe_open(p),
+                               width=80, color=ACCENT).grid(row=row, column=2, padx=(8, 6), pady=pady)
+            self._ghost_button(card, "Show", lambda p=path: self._safe_open(p, reveal=True),
+                               width=64).grid(row=row, column=3, padx=(0, 20), pady=pady)
+        card.grid()
+        self._fit_height()
 
     def log(self, message: str):
         stamp = datetime.now().strftime("%H:%M:%S")
@@ -673,11 +956,11 @@ class StemExtractorApp(ctk.CTk):
         self.log_box.configure(state="disabled")
 
 
-def self_test(report_path: Path) -> int:
+def self_test(report_path: Path, model_files: list[str]) -> int:
     """
     Headless check used by the Windows build: FFmpeg is found, and a short
-    generated test tone goes through the default UVR model and comes out as
-    two stems. Writes a report to `report_path`; returns the exit code.
+    generated test tone goes through each given UVR model (default: all) and
+    comes out as two stems. Writes a report to `report_path`; returns the exit code.
     """
     lines = []
     log = lines.append
@@ -685,22 +968,29 @@ def self_test(report_path: Path) -> int:
         if not ffmpeg_available():
             raise PipelineError("FFmpeg not found")
         log(f"ffmpeg: {shutil.which('ffmpeg')}")
+        log(f"device: {detect_device()}")
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             tmp = Path(tmp)
             tone = tmp / "tone.wav"
             subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
                             "sine=frequency=440:duration=8", "-ac", "2", "-ar", "44100", str(tone)],
                            check=True)
-            stems_dir = tmp / "stems"
-            stems_dir.mkdir()
-            job = Job(url="", model_file=next(iter(UVR_MODELS.values())),
-                      output_format="WAV", output_dir=tmp / "out")
-            pipeline = ExtractionPipeline(log=log, progress=lambda _v: None)
-            saved = pipeline.file_stems(pipeline.separate(tone, job, stems_dir), "Self Test", job.output_dir)
-            for path in saved:
-                log(f"saved: {path.relative_to(job.output_dir)}")
-            if len(saved) != 2:
-                raise PipelineError(f"expected 2 stems, got {len(saved)}")
+            for model_file in model_files:
+                log(f"--- {model_file}")
+                stems_dir = tmp / f"stems_{model_file}"
+                stems_dir.mkdir()
+                job = Job(url="", model_file=model_file, output_format="WAV",
+                          output_dir=tmp / f"out_{model_file}")
+                pipeline = ExtractionPipeline(log=log, progress=lambda _v: None)
+                started = time.monotonic()
+                saved = pipeline.file_stems(pipeline.separate(tone, job, stems_dir), "Self Test",
+                                            job.output_dir)
+                for path in saved:
+                    log(f"saved: {path.relative_to(job.output_dir)}")
+                kinds = sorted(p.parent.name for p in saved)
+                if kinds != ["acapellas", "instrumentals"]:
+                    raise PipelineError(f"{model_file}: expected an acapella and an instrumental, got {kinds}")
+                log(f"ok in {time.monotonic() - started:.1f}s")
         log("SELF-TEST PASSED")
         code = 0
     except Exception as exc:
@@ -712,8 +1002,9 @@ def self_test(report_path: Path) -> int:
 
 
 def main():
+    # python app.py --self-test report.txt [model_file ...]
     if len(sys.argv) >= 3 and sys.argv[1] == "--self-test":
-        sys.exit(self_test(Path(sys.argv[2])))
+        sys.exit(self_test(Path(sys.argv[2]), sys.argv[3:] or [m.filename for m in MODELS]))
     app = StemExtractorApp()
     app.mainloop()
 
