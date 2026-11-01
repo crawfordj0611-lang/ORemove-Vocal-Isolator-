@@ -1,0 +1,34 @@
+# Deletes every release (and its tag) except the one to keep. Run it manually
+# from the Actions tab after publishing a new version. It refuses to run if the
+# release to keep doesn't exist, so there is always a download available.
+name: Delete old releases
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: "Release tag to keep (all other releases are deleted)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      KEEP: ${{ inputs.keep }}
+    steps:
+      - name: Delete every release except the one to keep
+        run: |
+          gh release view "$KEEP" > /dev/null || { echo "Release $KEEP not found; nothing deleted."; exit 1; }
+          gh release list --limit 100 --json tagName --jq '.[].tagName' | while read -r tag; do
+            if [ "$tag" != "$KEEP" ]; then
+              echo "Deleting release and tag $tag"
+              gh release delete "$tag" --cleanup-tag --yes
+            fi
+          done
+          echo "Remaining releases:"
+          gh release list
