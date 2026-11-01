@@ -1,5 +1,11 @@
 **ORemove - AI Powered Vocal Isolator**: clean acapellas and instrumentals from YouTube links and your own audio files.
 
+### What's new in 1.5.1
+- **Accurate progress.** The percentage now follows the separation chunk by chunk, with time remaining, instead of sitting at 45% until the end. The first-use model download shows its own progress too.
+- **Shows where it's running.** The progress screen and activity log say whether the model runs on your GPU or the CPU (which is much slower).
+- **Faster on Mac:** BS-Roformer now uses 16-bit processing on Apple GPUs.
+- macOS: no more "find devices on local networks" prompt, and no second app icon.
+
 ### What's new in 1.5.0
 - **All-new interface.** A clean, Apple-style design: drop files anywhere on the window, watch a live progress ring, and get results as two cards with waveforms.
 - **Listen inside the app.** Play the vocals and instrumental right away, click a waveform to jump, and switch between them at the same point with **A/B**.

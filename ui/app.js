@@ -11,6 +11,9 @@ let selectedFiles = [];      // paths picked with Browse; shown as a summary in 
 let filesSummary = '';
 let running = false;
 let startedAt = 0, tickTimer = null;
+let separating = false;      // true while the model is separating (not downloading or loading)
+let rateStart = null;        // {t, v}: first progress sample of the current stage, for the time-left estimate
+let etaText = '';
 let songs = [], songIndex = 0;
 let abKind = 'Acapella';
 const players = {};          // kind -> {audio, card}
@@ -147,8 +150,11 @@ function resetProcessing(sources) {
   setStage(null);
   $('cancel').disabled = false; $('cancel').textContent = 'Stop';
   startedAt = Date.now();
+  separating = false; rateStart = null; etaText = '';
   clearInterval(tickTimer);
-  tickTimer = setInterval(() => { $('elapsed').textContent = fmt((Date.now() - startedAt) / 1000) + ' elapsed'; }, 500);
+  tickTimer = setInterval(() => {
+    $('elapsed').textContent = fmt((Date.now() - startedAt) / 1000) + ' elapsed' + (etaText ? ' · ' + etaText : '');
+  }, 500);
   document.querySelectorAll('.model, .seg').forEach(el => el.classList.add('disabled'));
 }
 function setProgress(v) {
@@ -168,6 +174,16 @@ $('cancel').onclick = () => {
   $('cancel').disabled = true;
   $('cancel').textContent = 'Stopping after the current step…';
 };
+// Time left, from how fast progress is moving in the current stage.
+function updateEta(v) {
+  if (v === null || !separating) return;
+  const now = Date.now();
+  if (!rateStart) { rateStart = { t: now, v }; return; }
+  const dv = v - rateStart.v, dt = (now - rateStart.t) / 1000;
+  if (dv < 0.01 || dt < 3) return;  // wait for a steady rate
+  const left = (0.97 - v) * dt / dv;
+  etaText = left < 60 ? 'under a minute left' : `about ${Math.ceil(left / 60)} min left`;
+}
 function finishRun() {
   running = false;
   clearInterval(tickTimer);
@@ -186,8 +202,15 @@ function handle(ev) {
     case 'device': setDevice(ev); break;
     case 'dropped': if (!running && ev.paths.length) { selectedFiles = []; input.value = ''; start(ev.paths); } break;
     case 'title': $('trackTitle').textContent = ev.text; break;
-    case 'stage': setStage(ev.name); $('stepText').textContent = ev.detail + '…'; break;
-    case 'progress': setProgress(ev.value); break;
+    case 'stage': {
+      // A new "Separating stems" step (or leaving it) restarts the time-left estimate.
+      const now = ev.detail.includes('Separating stems');
+      if (now || now !== separating) { rateStart = null; etaText = ''; }
+      separating = now;
+      setStage(ev.name); $('stepText').textContent = ev.detail + (ev.detail.endsWith(')') ? '' : '…');
+      break;
+    }
+    case 'progress': setProgress(ev.value); updateEta(ev.value); break;
     case 'done':
       finishRun();
       setStage('done'); setProgress(1);

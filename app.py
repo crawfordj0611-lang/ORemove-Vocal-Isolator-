@@ -30,6 +30,8 @@ Run:  python app.py
 
 from __future__ import annotations
 
+import functools
+import importlib
 import json
 import logging
 import multiprocessing
@@ -58,7 +60,7 @@ from urllib.parse import unquote
 
 APP_TITLE = "ORemove"
 APP_TAGLINE = "AI Powered Vocal Isolator"
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.5.1"
 
 # True when running as the packaged app (built with PyInstaller).
 FROZEN = getattr(sys, "frozen", False)
@@ -124,10 +126,11 @@ QUALITY_MODES = ["Best", "Faster"]  # "Faster": half the overlapping passes for 
 # model converted to PyTorch, in batches) on build machines without a GPU.
 force_gpu_settings = False
 
-# Share of the progress bar given to each stage.
-DOWNLOAD_SHARE = 0.40   # 0 % -> 40 %  : yt-dlp download
-MODEL_LOAD_AT = 0.45    # 45 %         : model loaded, separation starts
-SEPARATED_AT = 0.95     # 95 %         : stems written, moving files
+# Share of the progress bar given to each stage, roughly in proportion to the
+# time each takes: separation is by far the longest.
+DOWNLOAD_SHARE = 0.10   # 0 % -> 10 %  : getting the audio (YouTube download or decoding a file)
+MODEL_LOAD_AT = 0.15    # 10 % -> 15 % : loading (or, first time, downloading) the model
+SEPARATED_AT = 0.97     # 15 % -> 97 % : separating, reported chunk by chunk; then saving
 
 # --------------------------------------------------------------------------- #
 # Helpers (no GUI code here, so they are easy to test or reuse)
@@ -279,10 +282,106 @@ class _YtDlpLogger:
         self._log(f"yt-dlp: {msg}")
 
 
+# --------------------------------------------------------------------------- #
+# Progress from inside audio-separator
+# --------------------------------------------------------------------------- #
+# audio-separator reports its own progress through tqdm progress bars (one step
+# per chunk of audio while separating; bytes while downloading a model). We swap
+# tqdm in its modules for _ProgressBar, which passes those counts to
+# _progress_sink(kind, done, total) so the app can show real progress.
+
+_progress_sink = None
+
+
+class _ProgressBar:
+    """A minimal stand-in for tqdm that reports progress to _progress_sink."""
+
+    def __init__(self, iterable=None, total=None, kind="separate", **_kwargs):
+        self.iterable = iterable
+        if total is None and iterable is not None:
+            try:
+                total = len(iterable)
+            except TypeError:
+                total = None
+        self.total, self.n, self.kind = total, 0, kind
+
+    def __iter__(self):
+        for item in self.iterable:
+            yield item
+            self.update(1)
+
+    def update(self, n=1):
+        self.n += n
+        sink = _progress_sink
+        if sink and self.total:
+            try:
+                sink(self.kind, self.n, self.total)
+            except Exception:
+                pass  # progress display must never break separation
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self.close()
+
+    def __getattr__(self, _name):
+        # set_description, refresh, set_postfix, ...: nothing to do
+        return lambda *_args, **_kwargs: None
+
+
+# audio-separator modules that use tqdm, and what their progress means.
+_PROGRESS_MODULES = {
+    "audio_separator.separator.architectures.mdxc_separator": "separate",  # BS-Roformer
+    "audio_separator.separator.architectures.mdx_separator": "separate",   # MDX-Net
+    "audio_separator.separator.architectures.vr_separator": "separate",
+    "audio_separator.separator.separator": "download",                     # model downloads
+}
+
+
+def _install_progress_hooks():
+    for name, kind in _PROGRESS_MODULES.items():
+        try:
+            module = importlib.import_module(name)
+        except Exception:
+            continue
+        if hasattr(module, "tqdm"):
+            module.tqdm = functools.partial(_ProgressBar, kind=kind)
+
+
+def _set_progress_sink(sink):
+    global _progress_sink
+    _progress_sink = sink
+
+
 # The loaded model, kept between runs so each extraction doesn't reload it.
 # Only one job runs at a time, so no locking is needed. "safe" becomes True
 # after a GPU out-of-memory error and stays on for the rest of the session.
-_cache = {"key": None, "separator": None, "safe": False}
+_cache = {"key": None, "separator": None, "safe": False, "device": ""}
+
+
+def _describe_device(separator) -> str:
+    """Where a loaded model actually runs, in words: 'RTX 4070 SUPER', 'the Apple GPU', 'the CPU'."""
+    try:
+        instance = separator.model_instance
+        if getattr(instance, "uses_pytorch_inference", True) is False:
+            # MDX-Net through ONNX Runtime: CPU, or CoreML on a Mac.
+            providers = getattr(instance, "onnx_execution_provider", None) or separator.onnx_execution_provider or []
+            if providers and "CUDA" in providers[0]:
+                return detect_device()
+            return "the Apple GPU" if providers and "CoreML" in providers[0] else "the CPU"
+        device = getattr(instance, "torch_device", None) or separator.torch_device
+        kind = getattr(device, "type", str(device))
+        if kind == "cuda":
+            return detect_device()
+        if kind == "mps":
+            return "the Apple GPU"
+        return "the CPU"
+    except Exception:
+        return ""
 
 
 def _release_separator():
@@ -318,6 +417,8 @@ class ExtractionPipeline:
         self._title_cb = title
         self.cancel_event = cancel_event or threading.Event()
         self._index, self._count = 0, 1  # position in the current batch
+        self._shown = 0.0                 # highest progress shown for the current item
+        self.run_device = ""              # what the loaded model runs on, e.g. "RTX 4070 SUPER"
 
     def check_cancel(self):
         """Stop between steps once the user has pressed Stop."""
@@ -325,7 +426,10 @@ class ExtractionPipeline:
             raise Cancelled()
 
     def progress(self, value):
-        """Report progress of the current item, scaled to the whole batch."""
+        """Report progress of the current item, scaled to the whole batch. Never goes backwards."""
+        if value is not None:
+            value = max(value, self._shown)
+            self._shown = value
         self._progress_cb(None if value is None else (self._index + value) / self._count)
 
     def stage(self, name, detail):
@@ -472,9 +576,25 @@ class ExtractionPipeline:
         separator = self._load_separator(job, stems_dir)
 
         self.log("Separating stems...")
-        self.stage("separate", "Separating stems")
-        self.progress(None)
+        self.stage("separate", f"Separating stems on {self.run_device}" if self.run_device else "Separating stems")
+        self.progress(None)  # until the first chunk is done
         started = time.monotonic()
+        reported = {"fraction": 0.0, "logged": -10}
+
+        def on_progress(kind, done, total):
+            if kind != "separate":
+                return
+            fraction = min(1.0, done / total)
+            if fraction < reported["fraction"] + 0.002 and fraction < 1.0:
+                return  # only report visible changes
+            reported["fraction"] = max(fraction, reported["fraction"])
+            self.progress(MODEL_LOAD_AT + reported["fraction"] * (SEPARATED_AT - MODEL_LOAD_AT))
+            pct = int(reported["fraction"] * 100)
+            if pct >= reported["logged"] + 10:
+                reported["logged"] = pct
+                self.log(f"  separating... {pct}% ({time.monotonic() - started:.0f}s)")
+
+        _set_progress_sink(on_progress)
         try:
             produced = separator.separate(str(wav))
         except Exception as exc:
@@ -485,10 +605,14 @@ class ExtractionPipeline:
             self.log("GPU ran out of memory; retrying with lower-memory settings...")
             _release_separator()
             separator = self._load_separator(job, stems_dir, safe=True)
+            reported.update(fraction=0.0, logged=-10)
+            _set_progress_sink(on_progress)
             try:
                 produced = separator.separate(str(wav))
             except Exception as exc2:
                 raise PipelineError(f"Separation failed: {exc2}") from exc2
+        finally:
+            _set_progress_sink(None)
         self.log(f"Separated in {time.monotonic() - started:.1f}s")
 
         # audio-separator returns file names relative to output_dir.
@@ -515,10 +639,12 @@ class ExtractionPipeline:
             ) from exc
 
         cuda = torch.cuda.is_available()
+        mps = bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
         safe = safe or _cache["safe"]
         gpu_settings = (cuda or force_gpu_settings) and not safe
         key = (job.model_file, job.output_format, job.faster, safe, gpu_settings)
         if _cache["key"] == key:
+            self.run_device = _cache.get("device", "")
             # Point the loaded model at this run's folder; it is read when writing.
             _cache["separator"].output_dir = str(stems_dir)
             _cache["separator"].model_instance.output_dir = str(stems_dir)
@@ -537,9 +663,9 @@ class ExtractionPipeline:
 
         roformer = "roformer" in job.model_file.lower()
         options = dict(
-            # Half precision on NVIDIA GPUs: native float16 for BS-Roformer (verified
-            # by audio-separator), autocast for the MDX-Net model.
-            use_native_fp16=cuda and not safe and roformer,
+            # Half precision on GPUs: native float16 for BS-Roformer (verified by
+            # audio-separator on NVIDIA and Apple GPUs), autocast for MDX-Net on NVIDIA.
+            use_native_fp16=(cuda or mps) and not safe and roformer,
             use_autocast=cuda and not safe and not roformer,
             # A segment size other than the model's own (256) makes audio-separator
             # run the MDX-Net model through PyTorch, which uses the GPU, instead of
@@ -576,12 +702,35 @@ class ExtractionPipeline:
                  + ("" if model_cached else "  (first use: downloading model, please wait)"))
         self.stage("separate", "Loading model" if model_cached
                    else "Downloading model (first use only)")
+        shown = {"pct": -1}
+
+        def on_download(kind, done, total):
+            # The first use of a model downloads it (610 MB for BS-Roformer).
+            if kind != "download":
+                return
+            pct = min(100, int(done * 100 / total))
+            if pct == shown["pct"]:
+                return
+            shown["pct"] = pct
+            self.progress(DOWNLOAD_SHARE + (MODEL_LOAD_AT - DOWNLOAD_SHARE) * pct / 100)
+            self.stage("separate", f"Downloading model, first use only ({pct}% of {total / 1_048_576:.0f} MB)")
+            if pct % 10 == 0:
+                self.log(f"  downloading model... {pct}%")
+
+        _install_progress_hooks()
+        _set_progress_sink(on_download)
         try:
             separator.load_model(model_filename=job.model_file)
         except Exception as exc:
             raise PipelineError(f"Could not load model '{job.model_file}': {exc}") from exc
+        finally:
+            _set_progress_sink(None)
         self.progress(MODEL_LOAD_AT)
-        _cache.update(key=key, separator=separator, safe=safe)
+        _cache.update(key=key, separator=separator, safe=safe, device=_describe_device(separator))
+        self.run_device = _cache["device"]
+        self.log(f"Model running on: {self.run_device}")
+        if self.run_device == "the CPU":
+            self.log("Running on the CPU is much slower than a GPU: a full song can take 15 minutes or more with BS-Roformer.")
         return separator
 
     # ---- Step 3: put the stems where they belong ---------------------------
@@ -663,6 +812,7 @@ class ExtractionPipeline:
 
     def _run_one(self, source: str, i: int, job: Job, work_dir: Path, stems_dir: Path) -> dict:
         """Get one source as WAV, separate it, and save its stems."""
+        self._shown = 0.0
         self.check_cancel()
         wav = work_dir / f"input{i}.wav"  # unique per item: stems are named after it
         if looks_like_url(source):
