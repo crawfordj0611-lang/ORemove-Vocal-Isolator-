@@ -31,7 +31,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # CPU build of PyTorch: works on every PC and keeps the download small.
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          # torchvision (used by onnx2torch to load models) must come from the
+          # same index so its compiled operators match torch.
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
           pip install pyinstaller
 
@@ -63,6 +65,7 @@ jobs:
           --collect-all audio_separator
           --copy-metadata audio-separator
           --collect-all onnxruntime
+          --collect-all torchvision
           --collect-all samplerate
           --collect-data librosa
           --collect-data resampy
