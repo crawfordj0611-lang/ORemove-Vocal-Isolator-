@@ -67,6 +67,7 @@ Type: files; Name: "{app}\settings.json"
 function HasNvidiaGpu(): Boolean;
 var
   Locator, Service, Adapters, Adapter: Variant;
+  AdapterName: String;
   I: Integer;
 begin
   Result := False;
@@ -77,7 +78,8 @@ begin
     for I := 0 to Adapters.Count - 1 do
     begin
       Adapter := Adapters.ItemIndex(I);
-      if Pos('NVIDIA', Uppercase(Adapter.Name)) > 0 then
+      AdapterName := Adapter.Name;
+      if Pos('NVIDIA', Uppercase(AdapterName)) > 0 then
       begin
         Result := True;
         Exit;
