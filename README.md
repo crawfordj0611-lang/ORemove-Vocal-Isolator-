@@ -38,7 +38,7 @@
 
 ## Download
 
-Get the latest version from the **[Releases](https://github.com/crawfordj0611-lang/Money-Extractor-YT2MP3-Tool/releases/latest)** page.
+Get the latest version from the **[Releases](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest)** page.
 
 | Edition | Works on | Download |
 |---|---|---|
