@@ -1,5 +1,10 @@
 **ORemove - AI Powered Vocal Isolator**: clean acapellas and instrumentals from YouTube links and your own audio files.
 
+### What's new in 1.5.2
+- **Much lighter while idle.** The AI engine no longer loads when the app opens: it loads when you start a song, and the model is freed after 10 idle minutes. The window no longer checks for updates 10 times a second.
+- **Instant GPU badge.** Your NVIDIA card and driver are read straight from NVIDIA's own tool. If the engine then can't use the GPU, the app says exactly why (for example, a driver that's too old).
+- **ORemove icon in the taskbar** on Windows, also after upgrading from an older version.
+
 ### What's new in 1.5.1
 - **Accurate progress.** The percentage now follows the separation chunk by chunk, with time remaining, instead of sitting at 45% until the end. The first-use model download shows its own progress too.
 - **Shows where it's running.** The progress screen and activity log say whether the model runs on your GPU or the CPU (which is much slower).

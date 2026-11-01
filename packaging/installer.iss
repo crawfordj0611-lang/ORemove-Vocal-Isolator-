@@ -25,6 +25,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
 UninstallDisplayIcon={app}\{#AppName}.exe
 SetupIconFile=packaging\icon.ico
+; Tell Windows to refresh its icon cache, so upgrades from versions that had
+; the default Python icon show the ORemove icon straight away.
+ChangesAssociations=yes
 SourceDir=..
 OutputDir=installer-out
 OutputBaseFilename=ORemove-NVIDIA-GPU-Setup
@@ -48,8 +51,9 @@ Source: "dist\{#AppName}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdi
 Source: "packaging\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: not WebView2Installed
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppName}.exe"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppName}.exe"; Tasks: desktopicon
+; Same AppUserModelID as the app sets for itself, so the taskbar shows ORemove's icon.
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppName}.exe"; IconFilename: "{app}\_internal\icon.ico"; AppUserModelID: "newmoneymadeit.ORemove"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppName}.exe"; IconFilename: "{app}\_internal\icon.ico"; AppUserModelID: "newmoneymadeit.ORemove"; Tasks: desktopicon
 
 [Run]
 Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "Installing the Microsoft Edge WebView2 Runtime..."; Flags: waituntilterminated; Check: not WebView2Installed

@@ -1,8 +1,9 @@
 // ORemove interface logic.
 //
 // Talks to Python through window.pywebview.api (see the Api class in app.py).
-// Python never calls into the page: the page polls api.poll() for events
-// (progress, stage, log, done, ...) every 100 ms.
+// Python never calls into the page. Instead the page waits for events
+// (progress, stage, log, done, ...) on the app's local server (/events): one
+// request that returns as soon as something happens, so idle costs nothing.
 
 const $ = id => document.getElementById(id);
 let api = null;
@@ -30,7 +31,7 @@ whenApiReady(async () => {
   $('about').textContent = `ORemove ${state.version} · AI Powered Vocal Isolator`;
   renderSettings();
   if (!state.ffmpeg) showStartError('FFmpeg is missing, so audio can\'t be read or written. Reinstall ORemove.');
-  setInterval(pollEvents, 100);
+  listenForEvents();
   api.ready();
 });
 
@@ -191,10 +192,17 @@ function finishRun() {
 }
 
 // ---------- events from Python ----------
-async function pollEvents() {
-  let events;
-  try { events = await api.poll(); } catch { return; }
-  for (const ev of events) handle(ev);
+async function listenForEvents() {
+  const token = new URLSearchParams(location.search).get('t');
+  for (;;) {
+    try {
+      const response = await fetch(`/events?t=${token}`, { cache: 'no-store' });
+      if (!response.ok) throw new Error(response.status);
+      for (const ev of await response.json()) handle(ev);
+    } catch {
+      await new Promise(r => setTimeout(r, 1000));  // server busy or restarting: try again shortly
+    }
+  }
 }
 function handle(ev) {
   switch (ev.type) {

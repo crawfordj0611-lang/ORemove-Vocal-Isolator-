@@ -151,7 +151,7 @@ Continue with [First launch](#5-first-launch).
 
 ## 5. First launch
 
-1. **Wait for the device badge.** The window opens straight away. The badge in the top-right corner says **Loading engine…** for a few seconds, then shows what ORemove will run on:
+1. **Check the device badge.** The window opens straight away, and the badge in the top-right corner shows what ORemove will run on. (The AI engine itself loads when you start your first song, so that song takes a little longer to begin. If the engine finds it can't use your NVIDIA GPU after all, the badge changes to **GPU not used** and a message explains why.)
 
    | Badge | Meaning |
    |---|---|

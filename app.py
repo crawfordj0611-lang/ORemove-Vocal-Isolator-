@@ -60,7 +60,7 @@ from urllib.parse import unquote
 
 APP_TITLE = "ORemove"
 APP_TAGLINE = "AI Powered Vocal Isolator"
-APP_VERSION = "1.5.1"
+APP_VERSION = "1.5.2"
 
 # True when running as the packaged app (built with PyInstaller).
 FROZEN = getattr(sys, "frozen", False)
@@ -71,6 +71,12 @@ APP_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).re
 # Read-only files bundled with the app (the interface, FFmpeg, the fast model).
 BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
 UI_DIR = BUNDLE_DIR / "ui"
+# The app icon for the window and taskbar (bundled; from source, in packaging/).
+ICON_FILE = next((p for p in (BUNDLE_DIR / "icon.ico", BUNDLE_DIR / "packaging" / "icon.ico")
+                  if sys.platform.startswith("win") and p.exists()),
+                 next((p for p in (BUNDLE_DIR / "icon.png", BUNDLE_DIR / "packaging" / "icon.png") if p.exists()), None))
+# Windows groups taskbar buttons by this ID; it must match the installer's shortcuts.
+APP_USER_MODEL_ID = "newmoneymadeit.ORemove"
 # Where models, settings and history are kept. On Windows (and from source)
 # that's next to the program; a macOS app bundle must not be written to, so
 # there it's ~/Library/Application Support/ORemove.
@@ -250,6 +256,70 @@ def detect_device() -> str:
     return "CPU"
 
 
+def nvidia_gpu_info() -> tuple[str, str] | None:
+    """
+    (name, driver version) of the first NVIDIA GPU, from NVIDIA's own nvidia-smi
+    tool. Fast and light: it doesn't load PyTorch. None if there's no NVIDIA GPU
+    (or no driver).
+    """
+    exe = shutil.which("nvidia-smi")
+    if not exe and sys.platform.startswith("win"):
+        candidate = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "nvidia-smi.exe"
+        exe = str(candidate) if candidate.exists() else None
+    if not exe:
+        return None
+    try:
+        out = subprocess.run([exe, "--query-gpu=name,driver_version", "--format=csv,noheader"],
+                             capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW).stdout
+        name, driver = [x.strip() for x in out.strip().splitlines()[0].split(",")[:2]]
+        return name.replace("NVIDIA ", "").replace("GeForce ", ""), driver
+    except Exception:
+        return None
+
+
+def nvidia_edition_files() -> bool:
+    """True for the NVIDIA edition (PyTorch built with CUDA), without importing PyTorch."""
+    try:
+        import importlib.util
+        spec = importlib.util.find_spec("torch")
+        lib = Path(spec.origin).parent / "lib" if spec and spec.origin else BUNDLE_DIR / "torch" / "lib"
+        return any(lib.glob("torch_cuda*")) or any(lib.glob("libtorch_cuda*"))
+    except Exception:
+        return False
+
+
+# CUDA 12.6 (the NVIDIA edition's PyTorch) needs at least this NVIDIA driver.
+MIN_DRIVER = {"win": 528.33, "linux": 525.60}
+
+
+def cuda_diagnosis() -> str:
+    """Why PyTorch can't use the NVIDIA GPU, in words, for the log and the banner."""
+    lines = []
+    try:
+        import torch
+        lines.append(f"PyTorch {torch.__version__} (CUDA {torch.version.cuda})")
+        try:
+            torch.cuda.init()
+        except Exception as exc:
+            lines.append(f"CUDA error: {exc}")
+    except Exception as exc:
+        lines.append(f"PyTorch failed to load: {exc}")
+    info = nvidia_gpu_info()
+    if not info:
+        lines.append("No NVIDIA GPU or driver found (nvidia-smi didn't report one).")
+    else:
+        name, driver = info
+        lines.append(f"GPU: {name}, driver {driver}")
+        minimum = MIN_DRIVER["win" if sys.platform.startswith("win") else "linux"]
+        try:
+            if float(".".join(driver.split(".")[:2])) < minimum:
+                lines.append(f"The NVIDIA driver is too old: version {minimum:g} or newer is needed. "
+                             "Update it from nvidia.com/drivers or the NVIDIA app, then restart ORemove.")
+        except ValueError:
+            pass
+    return " | ".join(lines)
+
+
 def is_nvidia_edition() -> bool:
     """True for the NVIDIA GPU edition (PyTorch built with CUDA)."""
     try:
@@ -410,8 +480,10 @@ class ExtractionPipeline:
     """
 
     def __init__(self, log, progress, stage=lambda _name, _detail: None,
-                 title=lambda _text: None, cancel_event: threading.Event | None = None):
+                 title=lambda _text: None, cancel_event: threading.Event | None = None,
+                 engine=lambda _device: None):
         self.log = log
+        self._engine_cb = engine  # told what the model runs on, once it's loaded
         self._progress_cb = progress
         self._stage_cb = stage
         self._title_cb = title
@@ -645,6 +717,7 @@ class ExtractionPipeline:
         key = (job.model_file, job.output_format, job.faster, safe, gpu_settings)
         if _cache["key"] == key:
             self.run_device = _cache.get("device", "")
+            self._engine_cb(self.run_device)
             # Point the loaded model at this run's folder; it is read when writing.
             _cache["separator"].output_dir = str(stems_dir)
             _cache["separator"].model_instance.output_dir = str(stems_dir)
@@ -729,6 +802,7 @@ class ExtractionPipeline:
         _cache.update(key=key, separator=separator, safe=safe, device=_describe_device(separator))
         self.run_device = _cache["device"]
         self.log(f"Model running on: {self.run_device}")
+        self._engine_cb(self.run_device)
         if self.run_device == "the CPU":
             self.log("Running on the CPU is much slower than a GPU: a full song can take 15 minutes or more with BS-Roformer.")
         return separator
@@ -903,6 +977,8 @@ class LocalServer:
 
     def __init__(self):
         self.files: dict[str, Path] = {}
+        self.token = uuid.uuid4().hex   # required for /events
+        self.events_source = None       # Api.wait_events, set by the Api
         server = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -910,7 +986,24 @@ class LocalServer:
                 pass  # keep quiet
 
             def do_GET(self):
-                route = unquote(self.path.split("?", 1)[0])
+                route, _, query = unquote(self.path).partition("?")
+                if route == "/events":
+                    # Long poll: the page waits here for the next progress events,
+                    # which costs nothing while idle (unlike calling Python often).
+                    if f"t={server.token}" not in query or not server.events_source:
+                        self.send_error(403)
+                        return
+                    body = json.dumps(server.events_source()).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    try:
+                        self.wfile.write(body)
+                    except (ConnectionError, OSError):
+                        pass
+                    return
                 if route.startswith("/audio/"):
                     token = route[len("/audio/"):].split(".", 1)[0]  # URL ends in .wav/.mp3
                     path = server.files.get(token)
@@ -971,7 +1064,7 @@ class LocalServer:
 
     @property
     def url(self) -> str:
-        return f"http://127.0.0.1:{self.port}/index.html"
+        return f"http://127.0.0.1:{self.port}/index.html?t={self.token}"
 
     def audio_url(self, path: Path) -> str:
         token = uuid.uuid4().hex
@@ -982,6 +1075,11 @@ class LocalServer:
 # --------------------------------------------------------------------------- #
 # Bridge between the interface (ui/app.js) and the engine
 # --------------------------------------------------------------------------- #
+
+def _badge_device(device: str) -> str:
+    """'RTX 4070 SUPER' for the results badge; '' for the CPU."""
+    return {"the Apple GPU": "the Apple GPU", "the CPU": "", "": ""}.get(device, device)
+
 
 def _dialog(kind: str):
     """pywebview's dialog type ("OPEN" or "FOLDER"), across pywebview versions."""
@@ -1000,11 +1098,12 @@ class Api:
 
     def __init__(self, server: LocalServer):
         self._server = server
+        server.events_source = self.wait_events
         self._events: queue.Queue = queue.Queue()
         self._worker: threading.Thread | None = None
         self._cancel = threading.Event()
         self._device = ""
-        self.engine_error = ""
+        self._idle_timer: threading.Timer | None = None
         self.window = None  # set by main() once the window exists
         self.ready_event = threading.Event()
         settings = load_settings()
@@ -1021,6 +1120,14 @@ class Api:
     def emit(self, event_type: str, **data):
         self._events.put({"type": event_type, **data})
 
+    def wait_events(self, timeout: float = 20.0) -> list[dict]:
+        """Wait until there's at least one event (or the timeout), then return them all."""
+        try:
+            first = self._events.get(timeout=timeout)
+        except queue.Empty:
+            return []
+        return [first] + self.poll()
+
     def poll(self) -> list[dict]:
         events = []
         while True:
@@ -1033,26 +1140,64 @@ class Api:
         """Called by the page once it has loaded."""
         self.ready_event.set()
 
-    def preload_engine(self):
-        """Import the AI engine in the background and report what it runs on."""
-        try:
-            device = detect_device()
-        except Exception as exc:
-            self.engine_error = f"{type(exc).__name__}: {exc}"
-            self.emit("device", kind="error", name="Engine error", detail=str(exc))
-            self.emit("log", text=f"AI engine failed to load: {self.engine_error}")
-            return
-        self._device = device
-        self.emit("log", text=f"AI engine ready on: {device}")
-        if device != "CPU":
-            self.emit("device", kind="gpu", name=device)
-        elif is_nvidia_edition():
-            detail = ("No usable NVIDIA GPU found (none installed, or the driver is out of date). "
-                      "This edition only accelerates NVIDIA GPUs, so it's running on the CPU, which is much slower.")
-            self.emit("device", kind="nonvidia", name="No NVIDIA GPU", detail=detail)
-            self.emit("log", text=detail)
+    def detect_device_quickly(self):
+        """
+        Show what ORemove will run on, without loading the AI engine (which
+        takes time and memory; it loads when a job starts).
+        """
+        if MACOS:
+            import platform
+            if platform.machine() == "arm64":
+                self._device = "Apple GPU"
+                self.emit("device", kind="gpu", name="Apple GPU")
+            else:
+                self._device = "CPU"
+                self.emit("device", kind="cpu", name="CPU only")
+        elif nvidia_edition_files():
+            info = nvidia_gpu_info()
+            if info:
+                self._device = info[0]
+                self.emit("device", kind="gpu", name=info[0], detail=f"NVIDIA driver {info[1]}")
+                self.emit("log", text=f"NVIDIA GPU: {info[0]} (driver {info[1]})")
+            else:
+                self._device = "CPU"
+                detail = ("No NVIDIA GPU found (none installed, or no NVIDIA driver). This edition only "
+                          "accelerates NVIDIA GPUs, so it will run on the CPU, which is much slower.")
+                self.emit("device", kind="nonvidia", name="No NVIDIA GPU", detail=detail)
+                self.emit("log", text=detail)
         else:
+            self._device = "CPU"
             self.emit("device", kind="cpu", name="CPU only")
+
+    def on_engine(self, device: str):
+        """The AI engine has loaded a model: confirm (or correct) the device badge."""
+        if not device:
+            return
+        if device == "the CPU" and nvidia_edition_files():
+            diagnosis = cuda_diagnosis()
+            self.emit("log", text=f"The NVIDIA GPU can't be used: {diagnosis}")
+            self.emit("device", kind="nonvidia", name="GPU not used",
+                      detail=f"ORemove couldn't use your NVIDIA GPU, so it's running on the CPU (much slower). {diagnosis}")
+            self._device = "CPU"
+        elif device == "the Apple GPU":
+            self.emit("device", kind="gpu", name="Apple GPU")
+        elif device != "the CPU":
+            self._device = device
+            self.emit("device", kind="gpu", name=device)
+
+    def _schedule_idle_release(self):
+        """Free the loaded model (RAM and GPU memory) after 10 idle minutes."""
+        if self._idle_timer:
+            self._idle_timer.cancel()
+
+        def release():
+            if not (self._worker and self._worker.is_alive()) and _cache["key"] is not None:
+                _release_separator()
+                self.emit("log", text="Freed the AI model from memory after 10 minutes idle (it reloads on the next song).")
+
+        self._idle_timer = threading.Timer(600, release)
+        self._idle_timer.daemon = True
+        self._idle_timer.start()
 
     # Settings -----------------------------------------------------------------
 
@@ -1131,6 +1276,8 @@ class Api:
         job = Job(sources=sources, model_file=s["model"], output_format=s["format"],
                   output_dir=Path(s["output_dir"]), faster=s["quality"] == "Faster")
         self._cancel.clear()
+        if self._idle_timer:
+            self._idle_timer.cancel()
         self.emit("log", text="-" * 50)
         self.emit("log", text=f"Starting {len(sources)} item(s) [{job.model_file}, {job.output_format}, {s['quality']}]")
         self._worker = threading.Thread(target=self._run, args=(job,), daemon=True)
@@ -1142,12 +1289,19 @@ class Api:
         self.emit("log", text="Stopping after the current step...")
 
     def _run(self, job: Job):
+        try:
+            self._run_job(job)
+        finally:
+            self._schedule_idle_release()
+
+    def _run_job(self, job: Job):
         pipeline = ExtractionPipeline(
             log=lambda text: self.emit("log", text=text),
             progress=lambda value: self.emit("progress", value=value),
             stage=lambda name, detail: self.emit("stage", name=name, detail=detail),
             title=lambda text: self.emit("title", text=text),
             cancel_event=self._cancel,
+            engine=self.on_engine,
         )
         started = time.monotonic()
         try:
@@ -1172,7 +1326,7 @@ class Api:
         for failure in failures:
             self.emit("log", text=f"FAILED: {failure}")
         self.emit("done", songs=[self._song_view(e) for e in entries], failures=failures,
-                  seconds=round(seconds, 1), device=self._device if self._device != "CPU" else "")
+                  seconds=round(seconds, 1), device=_badge_device(pipeline.run_device))
 
     def _song_view(self, entry: dict) -> dict | None:
         """A history entry as the results screen shows it (with waveforms and playable URLs)."""
@@ -1259,6 +1413,14 @@ def run_window(smoke_test_report: Path | None = None) -> int:
         return 1
 
     copy_bundled_models()
+    if sys.platform.startswith("win"):
+        # Our own taskbar identity, so Windows shows ORemove's icon (and never
+        # groups the window under python.exe).
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+        except Exception:
+            pass
     server = LocalServer()
     api = Api(server)
     window = webview.create_window(f"{APP_TITLE} - {APP_TAGLINE}", server.url, js_api=api,
@@ -1275,7 +1437,7 @@ def run_window(smoke_test_report: Path | None = None) -> int:
             window.dom.document.events.drop += DOMEventHandler(on_drop, True, True)
         except Exception as exc:
             api.emit("log", text=f"Drag and drop unavailable: {exc}")
-        threading.Thread(target=api.preload_engine, daemon=True).start()
+        threading.Thread(target=api.detect_device_quickly, daemon=True).start()
 
     window.events.loaded += on_loaded
 
@@ -1289,12 +1451,12 @@ def run_window(smoke_test_report: Path | None = None) -> int:
             except Exception as exc:
                 lines.append(f"evaluate_js failed: {exc}")
                 ok = False
-            # The AI engine loads in the background once the page is up.
-            for _ in range(240):
-                if api._device or api.engine_error:
+            # The device badge is filled in without loading the AI engine.
+            for _ in range(60):
+                if api._device:
                     break
                 time.sleep(0.5)
-            lines.append(f"engine: {api._device or api.engine_error or 'did not load in time'}")
+            lines.append(f"device: {api._device or 'not detected in time'}")
             ok = ok and bool(api._device)
             # Stay open long enough for the build to take a screenshot (at ~40 s).
             time.sleep(max(0.0, 55 - (time.monotonic() - started)))
@@ -1307,7 +1469,8 @@ def run_window(smoke_test_report: Path | None = None) -> int:
         # On Windows, insist on Edge WebView2 (a missing runtime then gives the
         # clear message below instead of a broken fallback window).
         gui = "edgechromium" if sys.platform.startswith("win") else None
-        webview.start(smoke_test if smoke_test_report else None, gui=gui, debug=False)
+        webview.start(smoke_test if smoke_test_report else None, gui=gui, debug=False,
+                      icon=str(ICON_FILE) if ICON_FILE else None)
     except Exception as exc:
         if sys.platform.startswith("win"):
             show_fatal_error(

@@ -32,7 +32,7 @@
 - **History.** Every song you separate is listed under History, ready to play again.
 - **Lossless quality.** Audio is decoded straight to uncompressed WAV before separation (24-bit for your own files). Export to WAV, or MP3 at 320 kbps.
 - **Organised output.** Stems land in `acapellas/` and `instrumentals/`, named after the song. Existing files are never overwritten.
-- **Built for speed.** The window opens instantly while the AI engine loads in the background, the model stays loaded between songs, and a **Faster** quality mode roughly halves BS-Roformer processing time.
+- **Built for speed, light when idle.** The window opens instantly and uses little memory while idle: the AI engine loads when you start a song, stays loaded for the next ones, and is freed after 10 idle minutes. A **Faster** quality mode roughly halves BS-Roformer processing time.
 - **Private.** Everything runs on your computer; nothing is uploaded.
 - **Self-contained.** FFmpeg and the fast model are included; no Python or setup needed.
 

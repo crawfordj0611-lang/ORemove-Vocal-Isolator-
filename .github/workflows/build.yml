@@ -111,9 +111,9 @@ jobs:
             pyinstaller "${common[@]}" --icon packaging/icon.icns \
               --osx-bundle-identifier com.newmoneymadeit.oremove \
               --add-binary "ffmpeg-bin/ffmpeg:." --add-binary "ffmpeg-bin/ffprobe:." \
-              --add-data "models/UVR-MDX-NET-Inst_HQ_3.onnx:models" app.py
+              --add-data "models/UVR-MDX-NET-Inst_HQ_3.onnx:models" --add-data "packaging/icon.png:." app.py
           else
-            pyinstaller "${common[@]}" --icon packaging/icon.ico app.py
+            pyinstaller "${common[@]}" --icon packaging/icon.ico --add-data "packaging/icon.ico:." app.py
           fi
 
       - name: Add FFmpeg, models, docs and licenses
@@ -232,6 +232,7 @@ jobs:
           Write-Host "Refused on a PC without an NVIDIA GPU (exit code $code), as intended"
           $code = Run-Setup $setup ($quiet + "/SKIPGPUCHECK=1") 20
           if ($code -ne 0 -or -not (Test-Path "$dir\$env:APP_NAME.exe")) { throw "Install failed (exit code $code)" }
+          if (-not (Test-Path "$dir\_internal\icon.ico")) { throw "The app icon used by the shortcuts is missing" }
           Write-Host "Installed OK"
           Run-Setup "$dir\unins000.exe" @("/VERYSILENT", "/SUPPRESSMSGBOXES") 10 | Out-Null
 
