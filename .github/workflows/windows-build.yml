@@ -44,6 +44,17 @@ jobs:
           New-Item -ItemType Directory -Force ffmpeg-bin | Out-Null
           Copy-Item (Join-Path $bin.DirectoryName "ffmpeg.exe"), (Join-Path $bin.DirectoryName "ffprobe.exe") ffmpeg-bin
 
+      # Same check as the .exe self-test below, but from source: if this fails,
+      # the problem is a dependency, not the packaging. Also downloads the
+      # default model into models/.
+      - name: Self-test from source
+        shell: pwsh
+        run: |
+          python app.py --self-test source-test.txt
+          $code = $LASTEXITCODE
+          Get-Content source-test.txt
+          if ($code -ne 0) { throw "Source self-test failed" }
+
       - name: Build with PyInstaller
         run: >
           pyinstaller --noconfirm --windowed --name "${{ env.APP_NAME }}"
@@ -62,6 +73,7 @@ jobs:
           $dist = "dist/$env:APP_NAME"
           Copy-Item ffmpeg-bin/* $dist
           Copy-Item README.md $dist
+          Copy-Item models $dist -Recurse  # default UVR model, downloaded by the source self-test
           "FFmpeg (ffmpeg.exe, ffprobe.exe) is from https://github.com/BtbN/FFmpeg-Builds and is licensed under the GPL." | Set-Content "$dist/FFMPEG-LICENSE.txt"
 
       # Runs the real .exe: generates a test tone, separates it with the default

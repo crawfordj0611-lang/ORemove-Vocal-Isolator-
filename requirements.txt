@@ -9,3 +9,5 @@ yt-dlp>=2026.10.26
 #   audio-separator[gpu]
 # and install a CUDA build of PyTorch first (see README).
 audio-separator[cpu]>=0.48.0
+# audio-separator imports audioread but doesn't declare it as a dependency.
+audioread>=3.0
