@@ -2,18 +2,20 @@
 YT Stem Extractor & UVR Studio
 ==============================
 
-A desktop app that downloads the audio of a YouTube video and splits it into
-an Acapella (vocals) stem and an Instrumental stem using Ultimate Vocal
-Remover (UVR5) models, run through the `audio-separator` library.
+A desktop app that takes a YouTube video or your own audio files and splits
+each into an Acapella (vocals) stem and an Instrumental stem using Ultimate
+Vocal Remover (UVR5) models, run through the `audio-separator` library.
 
 Pipeline (runs on a background thread so the window never freezes):
     1. Check FFmpeg is on PATH.
-    2. yt-dlp: read the video's metadata (title), then download the best audio
-       stream and convert it to WAV in a temporary folder.
+    2. Get the audio as WAV in a temporary folder: for a YouTube link, yt-dlp
+       reads the title and downloads the best audio stream; for a local file
+       (MP3, WAV, FLAC, M4A, ... or a video), FFmpeg decodes it.
     3. audio-separator: load the chosen UVR model and split the WAV into
        Vocals and Instrumental.
     4. Copy the stems to <output>/acapellas/ and <output>/instrumentals/,
-       named after the video title, and delete the temporary files.
+       named after the video title or file name, and delete the temporary
+       files. Several files can be queued; the model is loaded once for all.
 
 The AI engine (PyTorch) takes a while to import, so it starts loading in the
 background as soon as the window opens. An NVIDIA GPU is used automatically
@@ -150,7 +152,7 @@ class PipelineError(Exception):
 @dataclass
 class Job:
     """Everything the worker needs, captured from the UI when Start is clicked."""
-    url: str
+    sources: list[str]  # YouTube links and/or local audio file paths, done in order
     model_file: str
     output_format: str  # "WAV" or "MP3"
     output_dir: Path
@@ -184,6 +186,19 @@ def unique_path(path: Path) -> Path:
         if not candidate.exists():
             return candidate
         n += 1
+
+
+# File types offered by the Browse dialog. FFmpeg reads all of these (video files
+# too: only their audio is used).
+AUDIO_FILE_TYPES = ("*.mp3 *.wav *.flac *.m4a *.aac *.ogg *.opus *.wma *.aiff *.aif "
+                    "*.alac *.mp4 *.mkv *.mov *.webm")
+
+# Keeps FFmpeg from flashing a console window when run from the windowed .exe.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0
+
+
+def looks_like_url(text: str) -> bool:
+    return bool(re.match(r"^(https?://|www\.)", text.strip(), re.IGNORECASE)) or is_youtube_url(text)
 
 
 def ffmpeg_available() -> bool:
@@ -263,12 +278,26 @@ class ExtractionPipeline:
     `log(str)`, `progress(float 0..1 or None)` and `stage(name, detail)` are
     callbacks supplied by the GUI; progress(None) means "busy, but the amount is
     unknown". Stages are "download", "separate" and "save".
+
+    For a batch of several sources, progress and stage details are reported
+    for the whole batch ("File 2 of 3 · ..."), and the model is loaded once.
     """
 
     def __init__(self, log, progress, stage=lambda _name, _detail: None):
         self.log = log
-        self.progress = progress
-        self.stage = stage
+        self._progress_cb = progress
+        self._stage_cb = stage
+        self._index, self._count = 0, 1  # position in the current batch
+        self._separator = None
+        self._separator_key = None
+
+    def progress(self, value):
+        """Report progress of the current item, scaled to the whole batch."""
+        self._progress_cb(None if value is None else (self._index + value) / self._count)
+
+    def stage(self, name, detail):
+        prefix = f"File {self._index + 1} of {self._count}  ·  " if self._count > 1 else ""
+        self._stage_cb(name, prefix + detail)
 
     # ---- Step 1: download --------------------------------------------------
 
@@ -376,10 +405,52 @@ class ExtractionPipeline:
             return "FFmpeg failed while converting the audio. Check your FFmpeg install."
         return f"Download failed: {text.removeprefix('ERROR: ')}"
 
+    def convert_local_file(self, src: Path, dest: Path) -> Path:
+        """Decode a local audio (or video) file to WAV with FFmpeg."""
+        self.log(f"Reading {src}")
+        self.stage("download", f"Reading {src.name}")
+        self.progress(None)
+        if not src.is_file():
+            raise PipelineError(f"File not found: {src}")
+        # 24-bit keeps the full quality of 24-bit WAV/FLAC sources.
+        result = subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-i", str(src), "-vn", "-ac", "2",
+             "-c:a", "pcm_s24le", str(dest)],
+            capture_output=True, text=True, creationflags=NO_WINDOW)
+        if result.returncode != 0 or not dest.exists():
+            reason = (result.stderr.strip().splitlines() or ["not a readable audio file"])[-1]
+            raise PipelineError(f"Couldn't read {src.name}: {reason}")
+        self.progress(DOWNLOAD_SHARE)
+        return dest
+
     # ---- Step 2: separation -----------------------------------------------
 
     def separate(self, wav: Path, job: Job, stems_dir: Path) -> list[Path]:
         """Run UVR on `wav`, writing stems into `stems_dir`. Returns their paths."""
+        separator = self._load_separator(job, stems_dir)
+
+        self.log("Separating stems...")
+        self.stage("separate", "Separating stems")
+        self.progress(None)
+        try:
+            produced = separator.separate(str(wav))
+        except Exception as exc:
+            raise PipelineError(f"Separation failed: {exc}") from exc
+
+        # audio-separator returns file names relative to output_dir.
+        paths = [p if p.is_absolute() else stems_dir / p for p in map(Path, produced)]
+        paths = [p for p in paths if p.exists()]
+        if not paths:
+            raise PipelineError("The model ran but produced no output files.")
+        self.progress(SEPARATED_AT)
+        return paths
+
+    def _load_separator(self, job: Job, stems_dir: Path):
+        """Create the separator and load the model, reusing it across a batch."""
+        key = (job.model_file, job.output_format, str(stems_dir))
+        if self._separator_key == key:
+            return self._separator
+
         self.log("Loading the AI engine (PyTorch)...")
         self.stage("separate", "Loading the AI engine")
         self.progress(None)
@@ -416,29 +487,15 @@ class ExtractionPipeline:
         except Exception as exc:
             raise PipelineError(f"Could not load model '{job.model_file}': {exc}") from exc
         self.progress(MODEL_LOAD_AT)
-
-        self.log("Separating stems...")
-        self.stage("separate", "Separating stems")
-        self.progress(None)
-        try:
-            produced = separator.separate(str(wav))
-        except Exception as exc:
-            raise PipelineError(f"Separation failed: {exc}") from exc
-
-        # audio-separator returns file names relative to output_dir.
-        paths = [p if p.is_absolute() else stems_dir / p for p in map(Path, produced)]
-        paths = [p for p in paths if p.exists()]
-        if not paths:
-            raise PipelineError("The model ran but produced no output files.")
-        self.progress(SEPARATED_AT)
-        return paths
+        self._separator, self._separator_key = separator, key
+        return separator
 
     # ---- Step 3: put the stems where they belong ---------------------------
 
     def file_stems(self, stems: list[Path], base_name: str, output_dir: Path) -> list[Path]:
         """
-        Copy each stem into acapellas/ or instrumentals/ and name it after the video.
-        audio-separator names files like 'source_(Vocals)_<model>.wav'.
+        Copy each stem into acapellas/ or instrumentals/, named after the video
+        or file. audio-separator names files like 'input0_(Vocals)_<model>.wav'.
         """
         self.stage("save", "Saving stems")
         acapella_dir = output_dir / "acapellas"
@@ -472,27 +529,61 @@ class ExtractionPipeline:
 
     # ---- Whole job --------------------------------------------------------
 
-    def run(self, job: Job) -> list[Path]:
+    def run(self, job: Job) -> tuple[list[Path], list[str]]:
+        """
+        Process every source in `job`. Returns (saved stem paths, failure messages).
+        A single source raises on failure; in a batch, a failed item is skipped
+        and reported, and the rest still run.
+        """
         if not ffmpeg_available():
             raise PipelineError(
                 "FFmpeg was not found on your PATH. Install FFmpeg (see README) "
                 "and restart the app."
             )
-        if not is_youtube_url(job.url):
-            raise PipelineError("Please paste a valid YouTube link (youtube.com or youtu.be).")
-
-        title = self.fetch_title(job.url)
-        base_name = sanitize_filename(title)
+        saved, failures = [], []
+        self._count = len(job.sources)
 
         # Everything temporary lives here and is deleted at the end, even on errors.
         with tempfile.TemporaryDirectory(prefix="yt_stem_", ignore_cleanup_errors=True) as tmp:
             work_dir = Path(tmp)
-            wav = self.download_wav(job.url, work_dir)
             stems_dir = work_dir / "stems"
             stems_dir.mkdir()
-            stems = self.separate(wav, job, stems_dir)
-            saved = self.file_stems(stems, base_name, job.output_dir)
+            for i, source in enumerate(job.sources):
+                self._index = i
+                try:
+                    saved += self._run_one(source, i, job, work_dir, stems_dir)
+                except PipelineError as exc:
+                    if self._count == 1:
+                        raise
+                    name = source if looks_like_url(source) else Path(source).name
+                    failures.append(f"{name}: {exc}")
+                    self.log(f"Skipped {name}: {exc}")
             self.log("Cleaning up temporary files...")
+
+        if failures and not saved:
+            raise PipelineError(f"None of the files could be processed. {failures[0]}")
+        return saved, failures
+
+    def _run_one(self, source: str, i: int, job: Job, work_dir: Path, stems_dir: Path) -> list[Path]:
+        """Get one source as WAV, separate it, and save its stems."""
+        wav = work_dir / f"input{i}.wav"  # unique per item: stems are named after it
+        if looks_like_url(source):
+            if not is_youtube_url(source):
+                raise PipelineError("Only YouTube links are supported (youtube.com or youtu.be).")
+            base_name = sanitize_filename(self.fetch_title(source))
+            download_dir = work_dir / f"download{i}"
+            download_dir.mkdir()
+            self.download_wav(source, download_dir).replace(wav)
+        else:
+            src = Path(source)
+            base_name = sanitize_filename(src.stem)
+            self.convert_local_file(src, wav)
+
+        stems = self.separate(wav, job, stems_dir)
+        saved = self.file_stems(stems, base_name, job.output_dir)
+        # Free disk space as we go; a batch of long WAVs adds up.
+        for path in [wav, *stems]:
+            path.unlink(missing_ok=True)
         return saved
 
 
@@ -500,7 +591,7 @@ class ExtractionPipeline:
 # GUI
 # --------------------------------------------------------------------------- #
 
-STAGES = [("download", "Download"), ("separate", "Separate"), ("save", "Save")]
+STAGES = [("download", "Get audio"), ("separate", "Separate"), ("save", "Save")]
 
 
 def short_path(path: Path, limit: int = 48) -> str:
@@ -546,7 +637,7 @@ class StemExtractorApp(ctk.CTk):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
         self.body = ctk.CTkFrame(self, fg_color="transparent")
-        self.body.grid(row=0, column=0, sticky="nsew", padx=32, pady=(28, 24))
+        self.body.grid(row=0, column=0, sticky="nsew", padx=32, pady=(22, 16))
         self.body.grid_columnconfigure(0, weight=1)
         self.body.grid_rowconfigure(7, weight=1)  # the details log takes spare height
 
@@ -569,7 +660,7 @@ class StemExtractorApp(ctk.CTk):
 
     # ---- Building blocks ---------------------------------------------------
 
-    def _card(self, row: int, pady=(0, 14)) -> ctk.CTkFrame:
+    def _card(self, row: int, pady=(0, 12)) -> ctk.CTkFrame:
         card = ctk.CTkFrame(self.body, fg_color=SURFACE, corner_radius=14,
                             border_width=1, border_color=BORDER)
         card.grid(row=row, column=0, sticky="ew", pady=pady)
@@ -599,7 +690,7 @@ class StemExtractorApp(ctk.CTk):
 
     def _build_header(self):
         header = ctk.CTkFrame(self.body, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 22))
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 18))
         header.grid_columnconfigure(0, weight=1)
 
         self._label(header, "UVR STUDIO", font="eyebrow", color=ACCENT).grid(row=0, column=0, sticky="w")
@@ -616,18 +707,26 @@ class StemExtractorApp(ctk.CTk):
 
     def _build_source(self):
         card = self._card(row=1)
-        self._label(card, "YouTube link").grid(row=0, column=0, columnspan=2, sticky="w",
-                                               padx=20, pady=(16, 8))
+        self._label(card, "YouTube link or audio file").grid(row=0, column=0, columnspan=3,
+                                                             sticky="w", padx=20, pady=(16, 8))
         self.url_entry = ctk.CTkEntry(
             card, height=46, corner_radius=10, font=self.fonts["body"],
             fg_color=FIELD, border_color=BORDER, border_width=1, text_color=TEXT,
-            placeholder_text="Paste a youtube.com or youtu.be link",
+            placeholder_text="Paste a YouTube link, or browse for audio files",
             placeholder_text_color=SUBTLE)
         self.url_entry.grid(row=1, column=0, sticky="ew", padx=(20, 8), pady=(0, 20))
         self.url_entry.bind("<Return>", lambda _e: self.start_extraction())
 
         self.paste_button = self._ghost_button(card, "Paste", self._paste_url, height=46)
-        self.paste_button.grid(row=1, column=1, padx=(0, 20), pady=(0, 20))
+        self.paste_button.grid(row=1, column=1, padx=(0, 8), pady=(0, 20))
+        self.browse_button = self._ghost_button(card, "Browse", self._browse_files, height=46,
+                                                width=84)
+        self.browse_button.grid(row=1, column=2, padx=(0, 20), pady=(0, 20))
+
+        # Files picked with Browse. When several are picked the entry shows a
+        # summary instead of a path; editing the entry drops the selection.
+        self.selected_files: list[Path] = []
+        self.files_summary = ""
 
     def _build_options(self):
         card = self._card(row=2)
@@ -646,7 +745,7 @@ class StemExtractorApp(ctk.CTk):
         self.model_menu.grid(row=1, column=0, columnspan=2, sticky="ew", padx=20)
         self.model_desc = self._label(card, MODELS_BY_LABEL[self.model_label].note,
                                       font="small", color=MUTED)
-        self.model_desc.grid(row=2, column=0, columnspan=2, sticky="w", padx=20, pady=(8, 16))
+        self.model_desc.grid(row=2, column=0, columnspan=2, sticky="w", padx=20, pady=(8, 14))
 
         tk.Frame(card, height=1, bg=BORDER, highlightthickness=0).grid(row=3, column=0, columnspan=2,
                                                            sticky="ew", padx=20)
@@ -677,7 +776,7 @@ class StemExtractorApp(ctk.CTk):
             self.body, text="Extract stems", height=52, corner_radius=12,
             font=self.fonts["button"], fg_color=ACCENT, hover_color=ACCENT_HOVER,
             text_color=ON_ACCENT, text_color_disabled=MUTED, command=self.start_extraction)
-        self.start_button.grid(row=3, column=0, sticky="ew", pady=(4, 18))
+        self.start_button.grid(row=3, column=0, sticky="ew", pady=(2, 14))
 
     def _build_progress(self):
         card = self._card(row=4)
@@ -731,13 +830,47 @@ class StemExtractorApp(ctk.CTk):
 
     # ---- UI actions --------------------------------------------------------
 
+    def _set_source_text(self, text: str):
+        self.url_entry.delete(0, "end")
+        self.url_entry.insert(0, text)
+
     def _paste_url(self):
         try:
             text = self.clipboard_get().strip()
         except Exception:
             return  # empty or non-text clipboard
-        self.url_entry.delete(0, "end")
-        self.url_entry.insert(0, text)
+        self.selected_files = []
+        self._set_source_text(text)
+
+    def _browse_files(self):
+        start = self.settings.get("input_dir") or str(Path.home() / "Music")
+        chosen = filedialog.askopenfilenames(
+            title="Choose audio files to separate", initialdir=start,
+            filetypes=[("Audio and video files", AUDIO_FILE_TYPES), ("All files", "*.*")])
+        if not chosen:
+            return
+        self.selected_files = [Path(p) for p in chosen]
+        self.settings["input_dir"] = str(self.selected_files[0].parent)
+        save_settings(self.settings)
+        if len(self.selected_files) == 1:
+            self.files_summary = str(self.selected_files[0])
+        else:
+            names = ", ".join(p.name for p in self.selected_files[:2])
+            more = "…" if len(self.selected_files) > 2 else ""
+            self.files_summary = f"{len(self.selected_files)} files: {names}{more}"
+        self._set_source_text(self.files_summary)
+        self._set_status(f"{len(self.selected_files)} file{'s' if len(self.selected_files) > 1 else ''} "
+                         "ready. Press Extract stems.")
+
+    def _current_sources(self) -> list[str]:
+        """What to process: the browsed files, or whatever is typed or pasted."""
+        text = self.url_entry.get().strip()
+        if self.selected_files and text == self.files_summary:
+            return [str(p) for p in self.selected_files]
+        self.selected_files = []
+        # Windows "Copy as path" wraps paths in quotes.
+        text = text.strip('"').strip("'")
+        return [text] if text else []
 
     def _on_model_change(self, label):
         self.model_label = label
@@ -782,7 +915,7 @@ class StemExtractorApp(ctk.CTk):
 
     def _set_running(self, running: bool):
         state = "disabled" if running else "normal"
-        for widget in (self.url_entry, self.paste_button, self.model_menu,
+        for widget in (self.url_entry, self.paste_button, self.browse_button, self.model_menu,
                        self.format_seg, self.change_button):
             widget.configure(state=state)
         self.start_button.configure(
@@ -793,24 +926,28 @@ class StemExtractorApp(ctk.CTk):
         if self.worker and self.worker.is_alive():
             return  # already running (e.g. Enter pressed twice)
 
-        url = self.url_entry.get().strip()
-        if not url:
-            self._set_status("Paste a YouTube link first.", DANGER)
+        sources = self._current_sources()
+        if not sources:
+            self._set_status("Paste a YouTube link or browse for audio files first.", DANGER)
             self.url_entry.focus_set()
             return
+        single = sources[0]
+        if len(sources) == 1 and not looks_like_url(single) and not Path(single).is_file():
+            self._set_status("That isn't a YouTube link or an audio file that exists.", DANGER)
+            return
 
-        job = Job(url=url, model_file=MODELS_BY_LABEL[self.model_label].filename,
+        job = Job(sources=sources, model_file=MODELS_BY_LABEL[self.model_label].filename,
                   output_format=self.output_format, output_dir=self.output_dir)
 
         self._set_running(True)
         self.results_card.grid_remove()
         self._set_progress(0)
         self._set_stage(None)
-        self._set_status("Fetching video info…")
+        self._set_status("Fetching video info…" if looks_like_url(single) else "Starting…")
         self.job_started_at = time.monotonic()
         self._tick()
         self.log("-" * 60)
-        self.log(f"Starting: {url}  [{job.model_file}, {job.output_format}]")
+        self.log(f"Starting {len(sources)} item(s)  [{job.model_file}, {job.output_format}]")
 
         self.worker = threading.Thread(target=self._worker_main, args=(job,), daemon=True)
         self.worker.start()
@@ -861,13 +998,20 @@ class StemExtractorApp(ctk.CTk):
                     self._set_status(payload, DANGER)
                     self.log(f"ERROR: {payload}")
                 elif kind == "done":
+                    saved, failures = payload
                     self._finish()
                     self._set_progress(1.0)
                     self._set_stage("done")
-                    self._set_status("Done. Your stems are ready.", ACCENT)
-                    for path in payload:
+                    if failures:
+                        self._set_status(f"Done, but {len(failures)} file(s) failed. "
+                                         "See Show details.", "#F5A524")
+                        for failure in failures:
+                            self.log(f"FAILED: {failure}")
+                    else:
+                        self._set_status("Done. Your stems are ready.", ACCENT)
+                    for path in saved:
                         self.log(f"Saved: {path}")
-                    self._show_results(payload)
+                    self._show_results(saved)
         except queue.Empty:
             pass
         self.after(100, self._drain_events)
@@ -939,26 +1083,41 @@ class StemExtractorApp(ctk.CTk):
             self.geometry(f"{self.winfo_width()}x{min(needed, limit)}")
 
     def _show_results(self, paths: list[Path]):
+        """One row per song: its name, a play button per stem, and Show in folder."""
         card = self.results_card
         for child in card.winfo_children():
             child.destroy()
-        card.grid_columnconfigure(1, weight=1)
+        card.grid_columnconfigure(0, weight=1)
         self._label(card, "Your stems").grid(row=0, column=0, columnspan=4, sticky="w",
                                              padx=20, pady=(16, 6))
-        # Acapella first, then instrumental, then anything else.
-        order = {"acapellas": 0, "instrumentals": 1}
-        for row, path in enumerate(sorted(paths, key=lambda p: order.get(p.parent.name, 2)), start=1):
-            kind = {"acapellas": "Acapella", "instrumentals": "Instrumental"}.get(path.parent.name, "Stem")
-            last = row == len(paths)
-            pady = (4, 18 if last else 4)
-            self._label(card, kind, font="label", color=TEXT, width=96).grid(
-                row=row, column=0, sticky="w", padx=(20, 8), pady=pady)
-            self._label(card, path.name, font="small", color=MUTED).grid(
-                row=row, column=1, sticky="ew", pady=pady)
-            self._ghost_button(card, "▶  Play", lambda p=path: self._safe_open(p),
-                               width=80, color=ACCENT).grid(row=row, column=2, padx=(8, 6), pady=pady)
-            self._ghost_button(card, "Show", lambda p=path: self._safe_open(p, reveal=True),
-                               width=64).grid(row=row, column=3, padx=(0, 20), pady=pady)
+
+        kinds = {"acapellas": "Acapella", "instrumentals": "Instrumental"}
+        songs: dict[str, dict[str, Path]] = {}
+        for path in paths:
+            song = path.stem.rsplit(" (", 1)[0]  # "Title (Acapella)" -> "Title"
+            songs.setdefault(song, {})[kinds.get(path.parent.name, "Stem")] = path
+
+        limit = 3  # a long batch would push the window off the screen
+        shown = list(songs.items())[:limit]
+        hidden = len(songs) - len(shown)
+        for row, (song, stems) in enumerate(shown, start=1):
+            pady = (4, 18 if row == len(shown) and hidden <= 0 else 4)
+            self._label(card, song, font="label", color=TEXT).grid(
+                row=row, column=0, sticky="ew", padx=(20, 8), pady=pady)
+            col = 1
+            for kind in ("Acapella", "Instrumental", "Stem"):
+                if kind in stems:
+                    self._ghost_button(card, f"▶  {kind}", lambda p=stems[kind]: self._safe_open(p),
+                                       width=118 if kind == "Instrumental" else 100,
+                                       color=ACCENT).grid(row=row, column=col, padx=(0, 6), pady=pady)
+                    col += 1
+            first = next(iter(stems.values()))
+            self._ghost_button(card, "Show", lambda p=first: self._safe_open(p, reveal=True),
+                               width=64).grid(row=row, column=col, padx=(0, 20), pady=pady)
+        if hidden > 0:
+            self._label(card, f"+ {hidden} more song{'s' if hidden > 1 else ''} in the output folder",
+                        font="small").grid(row=len(shown) + 1, column=0, columnspan=5,
+                                           sticky="w", padx=20, pady=(6, 18))
         card.grid()
         self._fit_height()
 
@@ -993,7 +1152,7 @@ def self_test(report_path: Path, model_files: list[str]) -> int:
                 log(f"--- {model_file}")
                 stems_dir = tmp / f"stems_{model_file}"
                 stems_dir.mkdir()
-                job = Job(url="", model_file=model_file, output_format="WAV",
+                job = Job(sources=[], model_file=model_file, output_format="WAV",
                           output_dir=tmp / f"out_{model_file}")
                 pipeline = ExtractionPipeline(log=log, progress=lambda _v: None)
                 started = time.monotonic()

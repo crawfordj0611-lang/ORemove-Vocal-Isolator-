@@ -1,11 +1,11 @@
 # Money-Extractor-YT2MP3-Tool
 
-**YT Stem Extractor & UVR Studio**: a desktop app that takes a YouTube link and gives you a clean **Acapella** and **Instrumental**, using Ultimate Vocal Remover (UVR5) models through [`audio-separator`](https://github.com/nomadkaraoke/python-audio-separator).
+**YT Stem Extractor & UVR Studio**: a desktop app that takes a YouTube link **or your own audio files** and gives you a clean **Acapella** and **Instrumental**, using Ultimate Vocal Remover (UVR5) models through [`audio-separator`](https://github.com/nomadkaraoke/python-audio-separator).
 
 ```
 output/
-├── acapellas/       <Video Title> (Acapella).wav
-└── instrumentals/   <Video Title> (Instrumental).wav
+├── acapellas/       <Song or video title> (Acapella).wav
+└── instrumentals/   <Song or video title> (Instrumental).wav
 ```
 
 ## Download for Windows
@@ -27,7 +27,9 @@ Both versions include FFmpeg and the MDX-Net model. If Windows SmartScreen warns
 
 ## Using it
 
-1. Paste a YouTube link (or click **Paste**).
+1. Choose what to separate:
+   - **A YouTube link:** paste it into the box (or click **Paste**).
+   - **Your own files:** click **Browse** and pick one or more files: MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, WMA, AIFF, or a video file (only its audio is used). Several files are processed one after another. You can also paste a file's path into the box.
 2. Choose a **Model** from the dropdown. Each entry shows the model's name and what it's best for:
 
    | Model | Best for |
@@ -38,11 +40,11 @@ Both versions include FFmpeg and the MDX-Net model. If Windows SmartScreen warns
 
    Every model produces both an acapella and an instrumental; the name says which stem it does best. The two BS-Roformer models are a large one-time download the first time you use each.
 3. Choose **WAV** (lossless) or **MP3** (320 kbps), and where to save. The installed app saves to `Music\YT Stem Extractor` by default.
-4. Click **Extract stems**. When it's done, **Play** opens a stem in your default player and **Show** opens it in Explorer.
+4. Click **Extract stems**. When it's done, each song gets **▶ Acapella** and **▶ Instrumental** buttons that open the stem in your default player, and **Show** opens it in Explorer. In a batch, if one file can't be read it's skipped and the rest still run; **Show details** says why.
 
 The device badge in the top-right corner shows what the AI engine runs on: your GPU's name, or "CPU only". Your model, format and folder choices are remembered.
 
-Existing files are never overwritten: a second run of the same video saves `… (Acapella) (2).wav`. Temporary files are deleted automatically, even if a job fails.
+Stems are named after the video title or the file name. Existing files are never overwritten: a second run of the same song saves `… (Acapella) (2).wav`. Temporary files are deleted automatically, even if a job fails.
 
 ## System requirements
 
