@@ -32,10 +32,12 @@ from __future__ import annotations
 
 import json
 import logging
+import multiprocessing
 import os
 import queue
 import re
 import shutil
+import socketserver
 import subprocess
 import sys
 import tempfile
@@ -804,7 +806,15 @@ class LocalServer:
                 except (ConnectionError, OSError):
                     pass  # the player stopped reading (seek or pause)
 
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        class Server(ThreadingHTTPServer):
+            def server_bind(self):
+                # The standard version also looks up the computer's network
+                # name, which on macOS triggers a "find devices on local
+                # networks" permission prompt. Loopback needs no name.
+                socketserver.TCPServer.server_bind(self)
+                self.server_name, self.server_port = "127.0.0.1", self.server_address[1]
+
+        self.httpd = Server(("127.0.0.1", 0), Handler)
         self.httpd.daemon_threads = True
         self.port = self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
@@ -1223,6 +1233,9 @@ def self_test(report_path: Path, model_files: list[str] | None) -> int:
 
 
 def main():
+    # Helper processes started by the AI engine re-run this program; this makes
+    # them do their job instead of opening another window (packaged app).
+    multiprocessing.freeze_support()
     # python app.py --self-test report.txt [model_file ...]   engine check, no window
     # python app.py --ui-smoke-test report.txt                 open and close the window
     if len(sys.argv) >= 3 and sys.argv[1] == "--self-test":
