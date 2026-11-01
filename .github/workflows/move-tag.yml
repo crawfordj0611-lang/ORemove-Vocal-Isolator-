@@ -1,6 +1,5 @@
-# One-off: points a release's tag at a different commit (used after rewriting
-# history). Deletes the tag, then edits the release so GitHub recreates the
-# tag at the new commit; the release and its downloads are kept.
+# One-off: points a release's tag at the current commit (used after rewriting
+# history). The release and its downloads are kept.
 name: Move tag
 
 on:
@@ -9,8 +8,8 @@ on:
       tag:
         description: "Release tag to move"
         required: true
-      commit:
-        description: "Commit to point it at (full SHA)"
+      release_id:
+        description: "Release ID (from the GitHub API)"
         required: true
 
 permissions:
@@ -23,12 +22,11 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
       TAG: ${{ inputs.tag }}
-      COMMIT: ${{ inputs.commit }}
+      RELEASE_ID: ${{ inputs.release_id }}
     steps:
-      - name: Move the tag
+      # The workflow token may only create a tag at the commit it runs from.
+      - name: Point the release's tag at this commit
         run: |
-          id=$(gh api "repos/$REPO/releases/tags/$TAG" --jq .id)
-          echo "Release $id; tag currently at $(gh api "repos/$REPO/git/ref/tags/$TAG" --jq .object.sha)"
-          gh api -X DELETE "repos/$REPO/git/refs/tags/$TAG"
-          gh api -X PATCH "repos/$REPO/releases/$id" -f tag_name="$TAG" -f target_commitish="$COMMIT" -F draft=false -f make_latest=true --jq '.html_url, .draft'
+          gh api -X DELETE "repos/$REPO/git/refs/tags/$TAG" 2>/dev/null || echo "No existing tag $TAG"
+          gh api -X PATCH "repos/$REPO/releases/$RELEASE_ID" -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -F draft=false -f make_latest=true --jq '.html_url, .draft'
           echo "Tag now at $(gh api "repos/$REPO/git/ref/tags/$TAG" --jq .object.sha)"
