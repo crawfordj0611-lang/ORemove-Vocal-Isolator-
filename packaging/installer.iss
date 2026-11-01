@@ -97,12 +97,14 @@ begin
   if ExpandConstant('{param:SKIPGPUCHECK|0}') = '1' then
     Exit;
   if not HasNvidiaGpu() then
-    Result := MsgBox(
+    { SuppressibleMsgBox (not MsgBox) so a silent install with /SUPPRESSMSGBOXES
+      gets the default answer, No, instead of waiting for a click. }
+    Result := SuppressibleMsgBox(
       'No NVIDIA graphics card was found on this PC.' + #13#10 + #13#10 +
       'This edition of ORemove only supports NVIDIA GPUs. AMD and Intel ' +
       'graphics are not supported. Without an NVIDIA card it runs on the processor, ' +
       'which is much slower, and the download is far larger than you need.' + #13#10 + #13#10 +
       'Use the CPU edition (ORemove-Windows-CPU.zip) instead.' + #13#10 + #13#10 +
       'Install this NVIDIA edition anyway?',
-      mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
+      mbConfirmation, MB_YESNO or MB_DEFBUTTON2, IDNO) = IDYES;
 end;

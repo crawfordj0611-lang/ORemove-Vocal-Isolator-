@@ -12,6 +12,9 @@ on:
       version:
         description: "Release version tag to create (leave empty to only build)"
         default: "v1.1.0"
+      editions:
+        description: 'Editions to build, as a JSON list: ["cpu","cuda"], ["cpu"] or ["cuda"]'
+        default: '["cpu","cuda"]'
 
 permissions:
   contents: write  # needed to create the release
@@ -21,13 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        flavor: [cpu, cuda]
-        include:
-          - flavor: cpu
-            torch_index: https://download.pytorch.org/whl/cpu
-          - flavor: cuda
-            # CUDA 12.6 build: supports GTX 900 series through RTX 40 series.
-            torch_index: https://download.pytorch.org/whl/cu126
+        flavor: ${{ fromJSON(inputs.editions || '["cpu","cuda"]') }}
     runs-on: windows-latest
     timeout-minutes: 120
     env:
@@ -45,7 +42,8 @@ jobs:
           python -m pip install --upgrade pip
           # torchvision (used by onnx2torch to load models) must come from the
           # same index so its compiled operators match torch.
-          pip install torch torchvision --index-url ${{ matrix.torch_index }}
+          # CUDA 12.6 build for the NVIDIA edition: GTX 900 series through RTX 40 series.
+          pip install torch torchvision --index-url ${{ matrix.flavor == 'cuda' && 'https://download.pytorch.org/whl/cu126' || 'https://download.pytorch.org/whl/cpu' }}
           pip install -r requirements.txt
           pip install pyinstaller pip-licenses
 
@@ -149,13 +147,19 @@ jobs:
           $setup = "installer-out/ORemove-NVIDIA-GPU-Setup.exe"
           $dir = "$env:RUNNER_TEMP\mxinstall"
           $quiet = "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$dir"
-          $p = Start-Process $setup -ArgumentList $quiet -Wait -PassThru
+          # Never wait forever: a dialog nobody can click would hang the build.
+          function Run-Setup($file, $arguments, $minutes) {
+            $p = Start-Process $file -ArgumentList $arguments -PassThru
+            if (-not $p.WaitForExit($minutes * 60000)) { $p.Kill(); throw "$file timed out (waiting for a dialog?)" }
+            return $p.ExitCode
+          }
+          $code = Run-Setup $setup $quiet 3
           if (Test-Path "$dir\$env:APP_NAME.exe") { throw "Setup installed on a PC without an NVIDIA GPU" }
-          Write-Host "Refused on a PC without an NVIDIA GPU (exit code $($p.ExitCode)), as intended"
-          $p = Start-Process $setup -ArgumentList ($quiet + "/SKIPGPUCHECK=1") -Wait -PassThru
-          if ($p.ExitCode -ne 0 -or -not (Test-Path "$dir\$env:APP_NAME.exe")) { throw "Install failed (exit code $($p.ExitCode))" }
+          Write-Host "Refused on a PC without an NVIDIA GPU (exit code $code), as intended"
+          $code = Run-Setup $setup ($quiet + "/SKIPGPUCHECK=1") 20
+          if ($code -ne 0 -or -not (Test-Path "$dir\$env:APP_NAME.exe")) { throw "Install failed (exit code $code)" }
           Write-Host "Installed OK"
-          Start-Process "$dir\unins000.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES" -Wait
+          Run-Setup "$dir\unins000.exe" @("/VERYSILENT", "/SUPPRESSMSGBOXES") 10 | Out-Null
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/') || inputs.version != ''
