@@ -56,9 +56,8 @@ Models download once, on first use. **Quality: Faster** roughly halves Roformer 
 | **Hardware** | NVIDIA GPU, 8 GB VRAM recommended (4 GB minimum) | 6–8 core CPU recommended | Apple M1 or newer |
 | **Memory** | 16 GB | 8 GB minimum, 16 GB recommended | 8 GB minimum, 16 GB recommended |
 | **Disk** | ~6 GB + up to 3 GB of models | ~2 GB + up to 3 GB of models | ~2 GB + up to 3 GB of models |
-| **4-minute song** | Seconds to about a minute | 15–30+ minutes (best models) | About 1–5 minutes |
 
-Times are estimates. Stems are saved to **Music/ORemove**. For help, see [installation problems](INSTALL.md#9-installation-problems).
+Stems are saved to **Music/ORemove**. For help, see [installation problems](INSTALL.md#9-installation-problems).
 
 ## Running from source
 
