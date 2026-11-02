@@ -1,0 +1,30 @@
+# Publishes a draft release (made by the Build workflow with "draft" ticked)
+# after it has been tested. The tag is created at the given commit.
+name: Publish draft release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Draft release tag to publish, e.g. v1.5.4"
+        required: true
+      commit:
+        description: "Commit to tag (the one the draft was built from); empty = latest main"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Publish
+        run: |
+          gh release view "${{ inputs.tag }}" --json isDraft,assets --jq '"draft: \(.isDraft)", (.assets[] | "\(.name)  \(.size)")'
+          gh release edit "${{ inputs.tag }}" --draft=false --latest \
+            --target "${{ inputs.commit || github.sha }}"
+          gh release view "${{ inputs.tag }}" --json isDraft,tagName,url --jq '"draft: \(.isDraft)  tag: \(.tagName)  \(.url)"'
