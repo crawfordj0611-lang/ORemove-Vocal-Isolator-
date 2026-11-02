@@ -1,14 +1,19 @@
-# Deletes every release (and its tag) except the one to keep. Run it manually
-# from the Actions tab after publishing a new version. It refuses to run if the
-# release to keep doesn't exist, so there is always a download available.
+# Deletes old releases (and their tags). Run it manually from the Actions tab.
+#   keep:   delete every release except this one (e.g. after publishing a new version)
+#   delete: delete just this one release
+# Fill in one of the two. "keep" refuses to run if that release doesn't exist,
+# so there is always a download available.
 name: Delete old releases
 
 on:
   workflow_dispatch:
     inputs:
       keep:
-        description: "Release tag to keep (all other releases are deleted)"
-        required: true
+        description: "Keep only this release tag (all others are deleted)"
+        required: false
+      delete:
+        description: "Or: delete just this release tag"
+        required: false
 
 permissions:
   contents: write
@@ -20,15 +25,24 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       KEEP: ${{ inputs.keep }}
+      DELETE: ${{ inputs.delete }}
     steps:
-      - name: Delete every release except the one to keep
+      - name: Delete releases
         run: |
-          gh release view "$KEEP" > /dev/null || { echo "Release $KEEP not found; nothing deleted."; exit 1; }
-          gh release list --limit 100 --json tagName --jq '.[].tagName' | while read -r tag; do
-            if [ "$tag" != "$KEEP" ]; then
-              echo "Deleting release and tag $tag"
-              gh release delete "$tag" --cleanup-tag --yes
-            fi
-          done
+          if [ -n "$DELETE" ] && [ -z "$KEEP" ]; then
+            gh release view "$DELETE" > /dev/null || { echo "Release $DELETE not found; nothing deleted."; exit 1; }
+            echo "Deleting release and tag $DELETE"
+            gh release delete "$DELETE" --cleanup-tag --yes
+          elif [ -n "$KEEP" ] && [ -z "$DELETE" ]; then
+            gh release view "$KEEP" > /dev/null || { echo "Release $KEEP not found; nothing deleted."; exit 1; }
+            gh release list --limit 100 --json tagName --jq '.[].tagName' | while read -r tag; do
+              if [ "$tag" != "$KEEP" ]; then
+                echo "Deleting release and tag $tag"
+                gh release delete "$tag" --cleanup-tag --yes
+              fi
+            done
+          else
+            echo "Fill in either 'keep' or 'delete' (not both)."; exit 1
+          fi
           echo "Remaining releases:"
           gh release list
