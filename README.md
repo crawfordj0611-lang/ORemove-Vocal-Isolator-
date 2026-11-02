@@ -38,7 +38,7 @@
 > On Windows, GPU acceleration works with **NVIDIA graphics cards only**. On other PCs, use the CPU edition, which works everywhere but is much slower.
 
 > [!NOTE]
-> **YouTube links depend on [yt-dlp](https://github.com/yt-dlp/yt-dlp).** YouTube changes its site often, which can stop YouTube downloads working until yt-dlp releases a fix. ORemove installs yt-dlp updates automatically (checked daily; see **Settings → YouTube downloader**), so there can be a short gap of a few days at most. Your own audio files are never affected.
+> **YouTube links depend on [yt-dlp](https://github.com/yt-dlp/yt-dlp).** YouTube changes its site often, which can stop YouTube downloads working until yt-dlp releases a fix. Starting with **version 1.5.4**, ORemove installs yt-dlp updates automatically (checked daily; see **Settings → YouTube downloader**), so there can be a short gap of a few days at most. **Versions 1.5.3 and older never update yt-dlp**, so their YouTube downloads will eventually stop working: update to 1.5.4 or newer. Your own audio files are never affected.
 
 ## Models
 

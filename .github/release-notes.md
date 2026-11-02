@@ -2,6 +2,7 @@
 
 ### What's new in 1.5.4
 - **YouTube links keep working on their own.** When YouTube changes its site, the fix arrives as a yt-dlp update; ORemove now checks for one daily and installs it automatically (a ~3 MB download, verified before use). If a YouTube download fails, it checks right away and retries with the update. See the version, check now, or turn it off under **Settings → YouTube downloader**.
+- **Please update if you use YouTube links.** 1.5.4 is the first version that updates yt-dlp; 1.5.3 and older never do, so their YouTube downloads will eventually stop working.
 
 ### What's new in 1.5.3
 - **New models: MelBand Roformer** by becruily, for the fullest instrumentals and acapellas (871 MB each, downloaded on first use).
