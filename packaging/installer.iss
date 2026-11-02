@@ -60,8 +60,9 @@ Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"
 Filename: "{app}\{#AppName}.exe"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; Models downloaded on first use and saved settings.
+; Models downloaded on first use, yt-dlp updates and saved settings.
 Type: filesandordirs; Name: "{app}\models"
+Type: filesandordirs; Name: "{app}\yt-dlp"
 Type: files; Name: "{app}\settings.json"
 Type: files; Name: "{app}\history.json"
 

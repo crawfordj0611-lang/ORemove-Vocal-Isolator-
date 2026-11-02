@@ -1,5 +1,8 @@
 **ORemove - AI Powered Vocal Isolator**: clean acapellas and instrumentals from YouTube links and your own audio files.
 
+### What's new in 1.5.4
+- **YouTube links keep working on their own.** When YouTube changes its site, the fix arrives as a yt-dlp update; ORemove now checks for one daily and installs it automatically (a ~3 MB download, verified before use). If a YouTube download fails, it checks right away and retries with the update. See the version, check now, or turn it off under **Settings → YouTube downloader**.
+
 ### What's new in 1.5.3
 - **New models: MelBand Roformer** by becruily, for the fullest instrumentals and acapellas (871 MB each, downloaded on first use).
 - **See where the time goes.** "Separated in" now means the separation itself, and the results screen breaks down the rest (getting the audio, first-time model download, starting the AI engine, saving) and shows the GPU memory used, so you can confirm your GPU is doing the work.

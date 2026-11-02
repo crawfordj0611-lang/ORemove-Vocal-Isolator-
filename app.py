@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import functools
 import importlib
+import importlib.abc
+import importlib.machinery
 import json
 import logging
 import multiprocessing
@@ -60,7 +62,7 @@ from urllib.parse import unquote
 
 APP_TITLE = "ORemove"
 APP_TAGLINE = "AI Powered Vocal Isolator"
-APP_VERSION = "1.5.3"
+APP_VERSION = "1.5.4"
 
 # True when running as the packaged app (built with PyInstaller).
 FROZEN = getattr(sys, "frozen", False)
@@ -150,6 +152,10 @@ SEPARATED_AT = 0.97     # 15 % -> 97 % : separating, reported chunk by chunk; th
 
 class PipelineError(Exception):
     """An expected failure with a message meant for the user."""
+
+
+class YouTubeChanged(PipelineError):
+    """yt-dlp failed in a way a newer yt-dlp may fix."""
 
 
 class Cancelled(PipelineError):
@@ -249,6 +255,187 @@ def save_settings(settings: dict) -> None:
         SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     except Exception:
         pass  # settings are a convenience; never fail a run over them
+
+
+# --------------------------------------------------------------------------- #
+# yt-dlp auto-update
+# --------------------------------------------------------------------------- #
+# YouTube changes its site often, and yt-dlp releases fixes within days. So
+# that YouTube links keep working without a new ORemove version, the app checks
+# PyPI (the official Python package index) once a day for a newer yt-dlp. A
+# newer one is downloaded (a single ~3 MB file), checked against PyPI's SHA-256
+# hash, kept in DATA_DIR/yt-dlp, and used instead of the bundled copy from the
+# next YouTube download on. If it ever fails to load, the bundled copy is used.
+
+YTDLP_DIR = DATA_DIR / "yt-dlp"
+YTDLP_INDEX = "https://pypi.org/pypi/yt-dlp/json"
+YTDLP_CHECK_EVERY = 24 * 3600  # seconds between automatic checks
+_YTDLP_WHEEL = re.compile(r"^yt_dlp-(\d+(?:\.\d+)*)-py3-none-any\.whl$")
+_ytdlp_lock = threading.RLock()  # held while yt-dlp runs or is swapped
+_ytdlp = {"wheel": None, "bundled": None, "auto": True}
+
+
+def _version_key(version: str) -> tuple:
+    """'2026.10.26' -> (2026, 10, 26); yt-dlp versions are dates."""
+    return tuple(int(x) for x in re.findall(r"\d+", version or "")) or (0,)
+
+
+class _YtDlpWheelFinder(importlib.abc.MetaPathFinder):
+    """Imports yt_dlp from the downloaded update when one is in use (ahead of
+    the copy bundled in the app, which PyInstaller serves from its own importer)."""
+
+    def find_spec(self, fullname, path=None, target=None):
+        wheel = _ytdlp["wheel"]
+        if wheel is None or not (fullname == "yt_dlp" or fullname.startswith("yt_dlp.")):
+            return None
+        return importlib.machinery.PathFinder.find_spec(fullname, [str(wheel)] if fullname == "yt_dlp" else path)
+
+
+def _forget_ytdlp():
+    """Unload yt_dlp so the next import loads the chosen copy."""
+    for name in [n for n in sys.modules if n == "yt_dlp" or n.startswith("yt_dlp.")]:
+        del sys.modules[name]
+    importlib.invalidate_caches()
+
+
+def bundled_ytdlp_version() -> str:
+    """The version of the yt-dlp built into this ORemove version."""
+    with _ytdlp_lock:
+        if _ytdlp["bundled"] is None:
+            try:
+                from importlib.metadata import version
+                _ytdlp["bundled"] = version("yt-dlp")
+            except Exception:  # no package metadata: ask the module itself
+                wheel, _ytdlp["wheel"] = _ytdlp["wheel"], None
+                _forget_ytdlp()
+                try:
+                    from yt_dlp.version import __version__
+                    _ytdlp["bundled"] = __version__
+                except Exception:
+                    _ytdlp["bundled"] = "0"
+                _forget_ytdlp()
+                _ytdlp["wheel"] = wheel
+        return _ytdlp["bundled"]
+
+
+def downloaded_ytdlp() -> list[tuple[str, Path]]:
+    """Downloaded yt-dlp updates as (version, file), newest first."""
+    found = []
+    for path in YTDLP_DIR.glob("yt_dlp-*.whl"):
+        match = _YTDLP_WHEEL.match(path.name)
+        if match:
+            found.append((match.group(1), path))
+    return sorted(found, key=lambda item: _version_key(item[0]), reverse=True)
+
+
+def ytdlp_version() -> str:
+    """The yt-dlp version the next YouTube download will use."""
+    bundled = bundled_ytdlp_version()
+    if _ytdlp["auto"]:
+        for version, _path in downloaded_ytdlp():
+            if _version_key(version) > _version_key(bundled):
+                return version
+    return bundled
+
+
+def use_ytdlp(log=lambda _text: None) -> str:
+    """
+    Before a YouTube download: switch to the newest working yt-dlp (a
+    downloaded update, or the bundled copy). Call with _ytdlp_lock held, since
+    yt-dlp must not be swapped while it runs. Returns the version in use.
+    """
+    bundled = bundled_ytdlp_version()
+    candidates = [(v, p) for v, p in downloaded_ytdlp() if _version_key(v) > _version_key(bundled)] \
+        if _ytdlp["auto"] else []
+    for version, path in candidates + [(bundled, None)]:
+        if _ytdlp["wheel"] != path:
+            _forget_ytdlp()
+            _ytdlp["wheel"] = path
+        if path is None:
+            return bundled
+        try:
+            import yt_dlp
+            import yt_dlp.version
+            if not str(getattr(yt_dlp, "__file__", "")).startswith(str(path)):
+                raise ImportError(f"loaded from {getattr(yt_dlp, '__file__', '?')}")
+            return yt_dlp.version.__version__
+        except Exception as exc:
+            log(f"yt-dlp {version} update didn't load ({exc}); using the next one.")
+            _forget_ytdlp()
+            _ytdlp["wheel"] = None
+            try:  # set aside, so it isn't used (or downloaded) again
+                path.replace(path.with_name(path.name + ".bad"))
+            except OSError:
+                pass
+    return bundled
+
+
+def _download(url: str, timeout: float = 30) -> bytes:
+    import ssl
+    import urllib.request
+    cafile = None
+    if not os.environ.get("SSL_CERT_FILE"):
+        try:
+            import certifi  # the packaged app has no system certificates on macOS
+            cafile = certifi.where()
+        except ImportError:
+            pass
+    context = ssl.create_default_context(cafile=cafile)
+    request = urllib.request.Request(url, headers={"User-Agent": f"ORemove/{APP_VERSION}"})
+    with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
+        return response.read()
+
+
+def update_ytdlp(force: bool = False, log=lambda _text: None) -> dict:
+    """
+    Check PyPI for a newer yt-dlp and download it. Unless forced, checks at
+    most once a day. Returns {"version": in use next, "updated": bool,
+    "checked": bool}. Raises on network or verification errors.
+    """
+    import hashlib
+    import zipfile
+    stamp = YTDLP_DIR / "last-check"
+    if not force and stamp.exists() and time.time() - stamp.stat().st_mtime < YTDLP_CHECK_EVERY:
+        return {"version": ytdlp_version(), "updated": False, "checked": False}
+    index = json.loads(_download(YTDLP_INDEX))
+    latest = index["info"]["version"]
+    YTDLP_DIR.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(latest, encoding="utf-8")  # mtime = time of this check
+    current = ytdlp_version()
+    if _version_key(latest) <= _version_key(current):
+        return {"version": current, "updated": False, "checked": True}
+    needs = re.match(r"\s*>=\s*(\d+)\.(\d+)", index["info"].get("requires_python") or "")
+    if needs and sys.version_info[:2] < (int(needs.group(1)), int(needs.group(2))):
+        log(f"yt-dlp {latest} needs a newer Python than this ORemove version; install the latest ORemove.")
+        return {"version": current, "updated": False, "checked": True}
+    wheel = next((f for f in index["urls"] if _YTDLP_WHEEL.match(f.get("filename", ""))), None)
+    if wheel is None:
+        raise RuntimeError(f"no installable file for yt-dlp {latest} on PyPI")
+    if (YTDLP_DIR / (wheel["filename"] + ".bad")).exists():
+        return {"version": current, "updated": False, "checked": True}  # this one failed to load before
+    log(f"Updating the YouTube downloader (yt-dlp {current} → {latest})...")
+    data = _download(wheel["url"], timeout=120)
+    if hashlib.sha256(data).hexdigest() != wheel["digests"]["sha256"]:
+        raise RuntimeError("the downloaded yt-dlp file didn't match PyPI's checksum")
+    temp = YTDLP_DIR / (wheel["filename"] + ".part")
+    temp.write_bytes(data)
+    try:
+        with zipfile.ZipFile(temp) as archive:
+            if not {"yt_dlp/__init__.py", "yt_dlp/version.py"} <= set(archive.namelist()):
+                raise RuntimeError("the downloaded yt-dlp file is incomplete")
+        os.replace(temp, YTDLP_DIR / wheel["filename"])
+    finally:
+        temp.unlink(missing_ok=True)
+    for _version, old in downloaded_ytdlp()[2:]:  # keep the newest two
+        try:
+            old.unlink()
+        except OSError:
+            pass  # in use (Windows); removed next time
+    log(f"YouTube downloader updated to yt-dlp {latest}.")
+    return {"version": ytdlp_version(), "updated": True, "checked": True}
+
+
+sys.meta_path.insert(0, _YtDlpWheelFinder())
 
 
 def detect_device() -> str:
@@ -546,6 +733,36 @@ class ExtractionPipeline:
 
     # ---- Step 1: download --------------------------------------------------
 
+    def download_youtube(self, url: str, download_dir: Path, wav: Path) -> str:
+        """Download a YouTube video's audio to `wav`, with the newest yt-dlp. Returns its title."""
+        with _ytdlp_lock:  # yt-dlp mustn't be updated while it runs
+            for attempt in (1, 2):
+                version = use_ytdlp(self.log)
+                self.log(f"Using yt-dlp {version}.")
+                try:
+                    title = self.fetch_title(url)
+                    self._title_cb(title)
+                    self.check_cancel()
+                    self.download_wav(url, download_dir).replace(wav)
+                    return title
+                except YouTubeChanged:
+                    # Maybe YouTube changed and yt-dlp has a fix already: check
+                    # now (not just once a day) and retry once with the update.
+                    if attempt == 2 or not _ytdlp["auto"]:
+                        raise
+                    self.stage("download", "Updating the YouTube downloader")
+                    try:
+                        updated = update_ytdlp(force=True, log=self.log)["updated"]
+                    except Exception as exc:
+                        self.log(f"Couldn't check for a yt-dlp update: {exc}")
+                        updated = False
+                    if not updated:
+                        raise
+                    self.check_cancel()
+                    shutil.rmtree(download_dir, ignore_errors=True)
+                    download_dir.mkdir(exist_ok=True)
+                    self.log("Trying again with the updated yt-dlp...")
+
     def fetch_title(self, url: str) -> str:
         import yt_dlp
         from yt_dlp.utils import DownloadError
@@ -562,7 +779,7 @@ class ExtractionPipeline:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
         except DownloadError as exc:
-            raise PipelineError(self._explain_download_error(exc)) from exc
+            raise self._download_error(exc) from exc
 
         if info is None:
             raise PipelineError("YouTube returned no information for this link.")
@@ -626,7 +843,7 @@ class ExtractionPipeline:
                 ydl.download([url])
         except (DownloadError, Cancelled) as exc:
             self.check_cancel()
-            raise PipelineError(self._explain_download_error(exc)) from exc
+            raise self._download_error(exc) from exc
 
         wav = work_dir / "source.wav"
         if not wav.exists():
@@ -635,24 +852,26 @@ class ExtractionPipeline:
         return wav
 
     @staticmethod
-    def _explain_download_error(exc: Exception) -> str:
+    def _download_error(exc: Exception) -> PipelineError:
         """Map yt-dlp's error text to a short, actionable message."""
         text = str(exc)
         lowered = text.lower()
         if "unsupported url" in lowered or "is not a valid url" in lowered:
-            return "That link isn't a supported YouTube video URL."
+            return PipelineError("That link isn't a supported YouTube video URL.")
         if "video unavailable" in lowered or "private video" in lowered:
-            return "The video is unavailable or private."
+            return PipelineError("The video is unavailable or private.")
         if "sign in to confirm your age" in lowered:
-            return "This video is age-restricted and can't be downloaded without signing in."
+            return PipelineError("This video is age-restricted and can't be downloaded without signing in.")
         if any(s in lowered for s in ("getaddrinfo", "name resolution", "timed out",
                                       "connection", "network is unreachable", "urlopen error")):
-            return "Network error: check your internet connection and try again."
+            return PipelineError("Network error: check your internet connection and try again.")
         if "ffmpeg" in lowered or "ffprobe" in lowered:
-            return "FFmpeg failed while converting the audio. Check your FFmpeg install."
-        return (f"YouTube download failed: {text.removeprefix('ERROR: ')}\n\nYouTube changes its site "
-                "often, which can break downloads until the yt-dlp downloader is updated. Install the "
-                "latest ORemove version, or use an audio file instead (your own files always work).")
+            return PipelineError("FFmpeg failed while converting the audio. Check your FFmpeg install.")
+        return YouTubeChanged(
+            f"YouTube download failed: {text.removeprefix('ERROR: ')}\n\nYouTube changes its site often, "
+            "which can break downloads until yt-dlp (the YouTube downloader) releases a fix. ORemove "
+            "installs yt-dlp updates automatically, so try again later, or use an audio file instead "
+            "(your own files always work).")
 
     def convert_local_file(self, src: Path, dest: Path) -> Path:
         """Decode a local audio (or video) file to WAV with FFmpeg."""
@@ -948,12 +1167,9 @@ class ExtractionPipeline:
         if looks_like_url(source):
             if not is_youtube_url(source):
                 raise PipelineError("Only YouTube links are supported (youtube.com or youtu.be).")
-            title = self.fetch_title(source)
-            self._title_cb(title)
-            self.check_cancel()
             download_dir = work_dir / f"download{i}"
             download_dir.mkdir()
-            self.download_wav(source, download_dir).replace(wav)
+            title = self.download_youtube(source, download_dir, wav)
         else:
             src = Path(source)
             title = src.stem
@@ -1173,7 +1389,9 @@ class Api:
             "quality": settings.get("quality") if settings.get("quality") in QUALITY_MODES else QUALITY_MODES[0],
             "format": settings.get("format") if settings.get("format") in OUTPUT_FORMATS else OUTPUT_FORMATS[0],
             "output_dir": settings.get("output_dir") or str(DEFAULT_OUTPUT_DIR),
+            "ytdlp_auto": settings.get("ytdlp_auto") is not False,
         }
+        _ytdlp["auto"] = self._settings["ytdlp_auto"]
 
     # Events -----------------------------------------------------------------
 
@@ -1298,6 +1516,7 @@ class Api:
                        for m in MODELS],
             "settings": dict(self._settings),
             "ffmpeg": ffmpeg_available(),
+            "ytdlp": ytdlp_version(),
         }
 
     def save_settings(self, change: dict) -> dict:
@@ -1307,8 +1526,29 @@ class Api:
                 self._settings[key] = value
             elif key == "output_dir" and value:
                 self._settings[key] = str(value)
+            elif key == "ytdlp_auto" and isinstance(value, bool):
+                self._settings[key] = _ytdlp["auto"] = value
+                if value:
+                    self.check_ytdlp(force=False)
+                else:
+                    self.emit("ytdlp", version=bundled_ytdlp_version(), status="Automatic updates off")
         save_settings(dict(self._settings))
         return dict(self._settings)
+
+    def check_ytdlp(self, force: bool = True):
+        """Check for a yt-dlp update in the background (Settings > Check now, and at startup)."""
+        def check():
+            self.emit("ytdlp", version=ytdlp_version(), status="Checking for updates…")
+            try:
+                result = update_ytdlp(force=force, log=lambda text: self.emit("log", text=text))
+                status = (f"Updated to {result['version']}" if result["updated"]
+                          else "Up to date" if result["checked"] else "Checks for updates daily")
+            except Exception as exc:
+                self.emit("log", text=f"Couldn't check for a yt-dlp update: {exc}")
+                status = "Couldn't check for updates (offline?)"
+            self.emit("ytdlp", version=ytdlp_version(), status=status)
+
+        threading.Thread(target=check, daemon=True).start()
 
     def choose_folder(self):
         result = self.window.create_file_dialog(_dialog("FOLDER"), directory=self._settings["output_dir"])
@@ -1530,6 +1770,10 @@ def run_window(smoke_test_report: Path | None = None) -> int:
         except Exception as exc:
             api.emit("log", text=f"Drag and drop unavailable: {exc}")
         threading.Thread(target=api.detect_device_quickly, daemon=True).start()
+        if api._settings["ytdlp_auto"]:
+            api.check_ytdlp(force=False)  # at most once a day
+        else:
+            api.emit("ytdlp", version=bundled_ytdlp_version(), status="Automatic updates off")
 
     window.events.loaded += on_loaded
 
@@ -1597,6 +1841,7 @@ def self_test(report_path: Path, model_files: list[str] | None) -> int:
         if not ffmpeg_available():
             raise PipelineError("FFmpeg not found")
         log(f"ffmpeg: {shutil.which('ffmpeg')}")
+        log(f"yt-dlp: {bundled_ytdlp_version()}")
         log(f"device: {detect_device()}")
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             tmp = Path(tmp)

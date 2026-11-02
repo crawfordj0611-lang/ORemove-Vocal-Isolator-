@@ -30,6 +30,7 @@ whenApiReady(async () => {
   state = await api.get_state();
   $('about').textContent = `ORemove ${state.version} · AI Powered Vocal Isolator`;
   renderSettings();
+  $('ytdlpVersion').textContent = `yt-dlp ${state.ytdlp}`;
   if (!state.ffmpeg) showStartError('FFmpeg is missing, so audio can\'t be read or written. Reinstall ORemove.');
   listenForEvents();
   api.ready();
@@ -73,6 +74,7 @@ function renderSettings() {
   setSeg('qualitySeg', s.quality, v => saveSettings({ quality: v }));
   setSeg('formatSeg', s.format, v => saveSettings({ format: v }));
   $('outDir').textContent = s.output_dir;
+  setSeg('ytdlpSeg', s.ytdlp_auto ? 'on' : 'off', v => saveSettings({ ytdlp_auto: v === 'on' }));
   const m = state.models.find(x => x.filename === s.model) || state.models[0];
   $('chipModel').textContent = m.name; $('chipBest').textContent = m.best_for;
   $('chipQuality').textContent = s.quality; $('chipFormat').textContent = s.format;
@@ -94,6 +96,11 @@ $('changeDir').onclick = async () => {
   if (dir) saveSettings({ output_dir: dir });
 };
 $('openOut').onclick = () => api.open_output();
+$('ytdlpCheck').onclick = () => api.check_ytdlp();
+function setYtdlp(ev) {
+  $('ytdlpVersion').textContent = `yt-dlp ${ev.version}`;
+  $('ytdlpStatus').textContent = ev.status;
+}
 
 // ---------- choosing a source ----------
 const input = $('source');
@@ -212,6 +219,7 @@ function handle(ev) {
   switch (ev.type) {
     case 'log': appendLog(ev.text); break;
     case 'device': setDevice(ev); break;
+    case 'ytdlp': setYtdlp(ev); break;
     case 'dropped': if (!running && ev.paths.length) { selectedFiles = []; input.value = ''; start(ev.paths); } break;
     case 'title': $('trackTitle').textContent = ev.text; break;
     case 'stage': {

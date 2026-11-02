@@ -1,6 +1,7 @@
 # Generated stems and cached UVR models
 output/
 models/
+yt-dlp/
 
 # Python
 __pycache__/

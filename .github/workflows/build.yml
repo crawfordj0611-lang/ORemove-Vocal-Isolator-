@@ -100,7 +100,7 @@ jobs:
       - name: Build with PyInstaller
         run: |
           common=(--noconfirm --windowed --name "$APP_NAME"
-            --add-data "ui:ui"
+            --add-data "ui:ui" --copy-metadata yt-dlp
             --collect-all webview
             --collect-all audio_separator --copy-metadata audio-separator
             --collect-all onnxruntime --collect-all torchvision --collect-all samplerate
