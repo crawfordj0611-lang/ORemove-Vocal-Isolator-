@@ -37,6 +37,9 @@
 > [!IMPORTANT]
 > On Windows, GPU acceleration works with **NVIDIA graphics cards only**. On other PCs, use the CPU edition, which works everywhere but is much slower.
 
+> [!NOTE]
+> **YouTube links depend on [yt-dlp](https://github.com/yt-dlp/yt-dlp).** YouTube changes its site often, which can stop YouTube downloads working until yt-dlp releases a fix and a new ORemove version includes it. Your own audio files are never affected.
+
 ## Models
 
 | Model | Best for | Size |

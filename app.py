@@ -650,7 +650,9 @@ class ExtractionPipeline:
             return "Network error: check your internet connection and try again."
         if "ffmpeg" in lowered or "ffprobe" in lowered:
             return "FFmpeg failed while converting the audio. Check your FFmpeg install."
-        return f"Download failed: {text.removeprefix('ERROR: ')}"
+        return (f"YouTube download failed: {text.removeprefix('ERROR: ')}\n\nYouTube changes its site "
+                "often, which can break downloads until the yt-dlp downloader is updated. Install the "
+                "latest ORemove version, or use an audio file instead (your own files always work).")
 
     def convert_local_file(self, src: Path, dest: Path) -> Path:
         """Decode a local audio (or video) file to WAV with FFmpeg."""

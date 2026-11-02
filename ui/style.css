@@ -84,7 +84,7 @@ button { font: inherit; }
 .chip { height: 30px; padding: 0 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--hairline); font-size: 12.5px; color: var(--text-2); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .chip:hover { color: var(--text); background: var(--surface-2); }
 .chip b { color: var(--text); font-weight: 550; }
-.banner { width: 100%; max-width: 640px; border-radius: 12px; padding: 11px 14px; font-size: 13px; margin-bottom: 14px; line-height: 1.45; user-select: text; }
+.banner { width: 100%; max-width: 640px; border-radius: 12px; padding: 11px 14px; font-size: 13px; margin-bottom: 14px; line-height: 1.45; user-select: text; white-space: pre-line; }
 .banner.error { background: rgba(255,105,97,0.12); border: 1px solid rgba(255,105,97,0.35); color: #ffc9c5; }
 .banner.warn { background: rgba(255,179,64,0.10); border: 1px solid rgba(255,179,64,0.30); color: #ffe0ad; max-width: none; }
 
