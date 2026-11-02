@@ -19,6 +19,10 @@ on:
       editions:
         description: 'Editions to build, as a JSON list, e.g. ["cpu","cuda","mac"] or ["mac"]'
         default: '["cpu","cuda","mac"]'
+      draft:
+        description: "Create the release as a draft (only you can see it; publish it on GitHub when ready)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write  # needed to create the release
@@ -252,6 +256,9 @@ jobs:
         with:
           # A manual run creates the tag from its version input.
           tag_name: ${{ env.VERSION }}
+          # The tag is made at this commit when the release is published.
+          target_commitish: ${{ github.sha }}
+          draft: ${{ inputs.draft == true }}
           make_latest: true
           fail_on_unmatched_files: true
           files: |
