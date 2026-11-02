@@ -235,6 +235,9 @@ To open the program folder of the NVIDIA GPU edition, press **Win + R**, type `%
 | **The badge says "No NVIDIA GPU"** on a PC with an NVIDIA card | Update your NVIDIA driver from [nvidia.com/drivers](https://www.nvidia.com/drivers) or the NVIDIA app, restart your PC, then open ORemove again. **Settings → Activity log** in the app shows more. |
 | **Antivirus quarantines ORemove** | Some antivirus products flag unsigned apps built with PyInstaller by mistake. Restore the file and add an exception for the ORemove folder, or download it again from the official [Releases page](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest). |
 | **"Not enough disk space"** | Free up space on drive C:. The NVIDIA GPU edition needs about 6 GB, plus up to 3 GB for the downloadable models; 12 GB free is recommended. |
+| **Badge says "GPU not used"** | The NVIDIA GPU couldn't be used, so ORemove fell back to the CPU. The message under the badge says why (most often an outdated NVIDIA driver). |
+| **Separation seems slow on a GPU** | Run the same song twice. The results screen breaks down where the time went: the first run includes one-time downloads and starting the AI engine. On an RTX card, **separating** should take seconds, and **GPU memory** should be in the thousands of MB. |
+| **YouTube download fails** for a video that plays fine | YouTube changes often; install the latest ORemove release, which includes an updated downloader. Age-restricted and private videos can't be downloaded. |
 | **ORemove doesn't start** (CPU edition) | Make sure you extracted the zip (see [section 3](#3-install-the-cpu-edition)) and that all its files are still in the folder. |
 
 Still stuck? [Open an issue](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/issues) with your Windows or macOS version, your graphics card or Mac model, and what you see. Include the text from **Settings → Activity log** if the app opens.
