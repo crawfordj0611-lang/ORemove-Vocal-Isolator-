@@ -1380,8 +1380,11 @@ class Api:
         self._device = ""
         self._idle_timer: threading.Timer | None = None
         self._warming = False
-        self.window = None  # set by main() once the window exists
-        self.ready_event = threading.Event()
+        # Underscored, so pywebview doesn't expose them to the page: it walks
+        # every public attribute, and the native window's properties nest
+        # endlessly, which can stall the window on Windows.
+        self._window = None  # set by run_window() once the window exists
+        self._ready = threading.Event()
         settings = load_settings()
         model = settings.get("model")
         self._settings = {
@@ -1416,7 +1419,7 @@ class Api:
 
     def ready(self):
         """Called by the page once it has loaded."""
-        self.ready_event.set()
+        self._ready.set()
 
     def detect_device_quickly(self):
         """
@@ -1551,13 +1554,13 @@ class Api:
         threading.Thread(target=check, daemon=True).start()
 
     def choose_folder(self):
-        result = self.window.create_file_dialog(_dialog("FOLDER"), directory=self._settings["output_dir"])
+        result = self._window.create_file_dialog(_dialog("FOLDER"), directory=self._settings["output_dir"])
         return result[0] if result else None
 
     def browse_files(self) -> list[str]:
         patterns = ";".join(f"*.{e}" for e in AUDIO_EXTENSIONS)
         start = load_settings().get("input_dir") or str(Path.home() / "Music")
-        result = self.window.create_file_dialog(
+        result = self._window.create_file_dialog(
             _dialog("OPEN"), allow_multiple=True, directory=start,
             file_types=(f"Audio and video files ({patterns})", "All files (*.*)"))
         paths = [str(p) for p in (result or [])]
@@ -1757,7 +1760,7 @@ def run_window(smoke_test_report: Path | None = None) -> int:
     api = Api(server)
     window = webview.create_window(f"{APP_TITLE} - {APP_TAGLINE}", server.url, js_api=api,
                                    width=1000, height=720, min_size=(760, 620), background_color="#111114")
-    api.window = window
+    api._window = window
 
     def on_drop(event):
         files = (event.get("dataTransfer") or {}).get("files") or []
@@ -1779,7 +1782,7 @@ def run_window(smoke_test_report: Path | None = None) -> int:
 
     def smoke_test():
         started = time.monotonic()
-        ok = api.ready_event.wait(90)
+        ok = api._ready.wait(90)
         lines = [f"page loaded and called Python: {ok}", f"version: {APP_VERSION}", f"url: {server.url}"]
         if ok:
             try:
