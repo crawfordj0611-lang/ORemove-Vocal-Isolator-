@@ -40,7 +40,7 @@ On Windows, GPU acceleration works with **NVIDIA graphics cards only**. On other
 > **NVIDIA GPU edition: download all 3 files into the same folder**, then run the `.exe`. GitHub limits files to 2 GB, so the installer comes in parts:
 >
 > ```
-> 📁 Downloads
+> 📁 New Folder
 >    ├── ORemove-NVIDIA-GPU-Setup.exe
 >    ├── ORemove-NVIDIA-GPU-Setup-1.bin
 >    └── ORemove-NVIDIA-GPU-Setup-2.bin
