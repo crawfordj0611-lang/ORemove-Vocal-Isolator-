@@ -7,7 +7,18 @@
 > **⚠️ On Windows, GPU acceleration works with NVIDIA graphics cards only.** AMD and Intel GPUs are not supported; use the CPU edition on those PCs.
 
 ### Windows · NVIDIA GPU edition (NVIDIA graphics cards only)
-Download **all** the `ORemove-NVIDIA-GPU-Setup` files (the `.exe` and every `.bin` part) into the same folder, then run `ORemove-NVIDIA-GPU-Setup.exe`. Installs for your user only; no admin needed. The installer warns you if it can't find an NVIDIA card, and installs Microsoft's WebView2 component if needed. Needs a GeForce GTX 900-series or newer card and a current driver.
+**Download all 3 files into the same folder**, then run the `.exe`. GitHub limits files to 2 GB, so the installer comes in parts:
+
+```
+📁 Downloads
+   ├── ORemove-NVIDIA-GPU-Setup.exe
+   ├── ORemove-NVIDIA-GPU-Setup-1.bin
+   └── ORemove-NVIDIA-GPU-Setup-2.bin
+```
+
+Let both `.bin` files finish downloading first, and don't rename them. A missing, renamed (`... (1).bin`) or half-downloaded part causes a "source file is corrupted" error: delete the old copies and download again.
+
+Installs for your user only; no admin needed. The installer warns you if it can't find an NVIDIA card, and installs Microsoft's WebView2 component if needed. Needs a GeForce GTX 900-series or newer card and a current driver.
 
 ### Windows · CPU edition (any PC, including AMD and Intel graphics)
 Download `ORemove-Windows-CPU.zip`, extract it, and run `ORemove.exe` inside. Works everywhere, but much slower.

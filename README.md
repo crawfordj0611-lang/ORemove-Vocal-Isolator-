@@ -28,16 +28,16 @@
 
 **[Get the latest release](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest)**, then follow the **[installation guide](INSTALL.md)**.
 
-| Edition | For | File |
+| Edition | For | Download |
 |---|---|---|
-| **Windows · NVIDIA GPU** | PCs with an NVIDIA GeForce GTX 900-series or newer | 3 files: `ORemove-NVIDIA-GPU-Setup.exe`, `-1.bin` and `-2.bin` (see below) |
+| **Windows · NVIDIA GPU** | PCs with an NVIDIA GeForce GTX 900-series or newer | 3 files (see below) |
 | **Windows · CPU** | Any 64-bit Windows PC, including AMD and Intel graphics | `ORemove-Windows-CPU.zip` |
 | **macOS** | Apple Silicon (M1 or newer), macOS 13+ | `ORemove-macOS-AppleSilicon.dmg` |
 
-On Windows, GPU acceleration works with **NVIDIA graphics cards only**; on other PCs, use the CPU edition (much slower, but works everywhere).
+On Windows, GPU acceleration works with **NVIDIA graphics cards only**. On other PCs, use the CPU edition: it works everywhere, but is much slower.
 
 > [!IMPORTANT]
-> **NVIDIA GPU edition: download all 3 files into the same folder.** The installer is split into parts because GitHub limits files to 2 GB:
+> **NVIDIA GPU edition: download all 3 files into the same folder**, then run the `.exe`. GitHub limits files to 2 GB, so the installer comes in parts:
 >
 > ```
 > 📁 Downloads
@@ -46,14 +46,10 @@ On Windows, GPU acceleration works with **NVIDIA graphics cards only**; on other
 >    └── ORemove-NVIDIA-GPU-Setup-2.bin
 > ```
 >
-> Wait until both `.bin` files have finished downloading, then run `ORemove-NVIDIA-GPU-Setup.exe`. Don't rename the files: if your browser saved a copy as `... (1).bin`, delete the old copies and download again. A missing, renamed or half-downloaded part causes a "source file is corrupted" error.
+> Let both `.bin` files finish downloading first, and don't rename them. A missing, renamed (`... (1).bin`) or half-downloaded part causes a "source file is corrupted" error: delete the old copies and download again.
 
 > [!CAUTION]
 > **ORemove is free.** If anyone charged you for it, you've been scammed. Only download it from the [official releases page](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases).
-
-### YouTube links
-
-YouTube downloads use [yt-dlp](https://github.com/yt-dlp/yt-dlp), which needs updating whenever YouTube changes its site. **ORemove 1.5.4 and newer update yt-dlp automatically** (see **Settings → YouTube downloader**). Older versions never do, so their YouTube downloads will eventually stop working: update to the latest release. Your own audio files are never affected.
 
 ## Models
 
@@ -76,6 +72,10 @@ Models download once, on first use. **Quality: Faster** roughly halves Roformer 
 | **Disk** | ~6 GB + up to 3 GB of models | ~2 GB + up to 3 GB of models | ~2 GB + up to 3 GB of models |
 
 Stems are saved to **Music/ORemove**. For help, see [installation problems](INSTALL.md#9-installation-problems).
+
+## YouTube links
+
+YouTube downloads use [yt-dlp](https://github.com/yt-dlp/yt-dlp), which needs updating whenever YouTube changes its site. ORemove checks for yt-dlp updates daily and installs them automatically (see **Settings → YouTube downloader**). Your own audio files are never affected.
 
 ## Running from source
 
