@@ -148,20 +148,6 @@ jobs:
             echo "Source code: https://github.com/FFmpeg/FFmpeg and https://ffmpeg.org/download.html"
           } > "$docs/FFMPEG-LICENSE.txt"
 
-      # Smaller downloads: drop files only needed to build software against
-      # these libraries (never loaded when the app runs), and list what's left.
-      # (Windows only: changing files inside the signed macOS app would break its signature.)
-      - name: Trim build-only files
-        if: matrix.flavor != 'mac'
-        run: |
-          root="dist/$APP_NAME"
-          before=$(du -sm "$root" | cut -f1)
-          find "$root" -type f \( -name '*.lib' -o -name '*.pdb' -o -name '*.h' -o -name '*.hpp' -o -name '*.cuh' \
-               -o -name '*.cmake' -o -name '*.pyi' -o -name '*.a' \) -delete
-          find "$root" -type d \( -path '*/torch/include' -o -path '*/torch/share/cmake' -o -name '__pycache__' \) -prune -exec rm -rf {} +
-          echo "Trimmed $((before - $(du -sm "$root" | cut -f1))) MB; now $(du -sm "$root" | cut -f1) MB"
-          echo "Largest files:"; find "$root" -type f -size +40M -exec du -m {} + | sort -rn | head -25
-
       # Runs the real packaged app on every model: generates a test tone,
       # separates it, and checks an acapella and an instrumental are written.
       - name: Self-test the built app
