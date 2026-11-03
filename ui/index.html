@@ -23,24 +23,33 @@
   <section class="screen active" id="start">
     <h1 class="hero-title">Isolate any vocal.</h1>
     <p class="hero-sub">Drop a song, or paste a YouTube link. Studio-grade stems in seconds.</p>
-    <div class="banner error hidden" id="startError"></div>
-    <div class="drop" id="drop">
-      <div class="drop-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M20 15v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-4"/></svg></div>
-      <div class="drop-text">Drop audio files here <span>· MP3, WAV, FLAC, M4A and more</span></div>
-      <div class="or">or</div>
-      <div class="link-row">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
-        <input id="source" placeholder="Paste a YouTube link or a file path" autocomplete="off" spellcheck="false">
-        <button class="clear hidden" id="clearSource" title="Clear"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-        <button class="btn btn-ghost" id="browse">Browse files</button>
-        <button class="btn btn-primary" id="go">Separate
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
-      </div>
+    <div class="banner update hidden" id="updateBanner">
+      <span id="updateText">A new version of ORemove is available.</span>
+      <button class="btn btn-primary btn-sm" id="updateGet">Download</button>
+      <button class="clear" id="updateDismiss" title="Not now"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
-    <div class="chips">
-      <button class="chip" data-open="settings"><b id="chipModel">–</b> <span id="chipBest"></span></button>
-      <button class="chip" data-open="settings">Quality <b id="chipQuality">–</b></button>
-      <button class="chip" data-open="settings">Format <b id="chipFormat">–</b></button>
+    <div class="banner error hidden" id="startError"></div>
+    <div class="panel">
+      <div class="drop" id="drop">
+        <div class="drop-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M20 15v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-4"/></svg></div>
+        <div class="drop-text">Drop audio files here</div>
+        <div class="drop-sub">MP3, WAV, FLAC, M4A, video files and more · one song or a whole batch</div>
+        <div class="link-row">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
+          <input id="source" placeholder="Paste a YouTube link or a file path" autocomplete="off" spellcheck="false">
+          <button class="clear hidden" id="clearSource" title="Clear"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          <button class="btn btn-ghost" id="browse">Browse files</button>
+          <button class="btn btn-primary" id="go">Separate
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+        </div>
+      </div>
+      <div class="controls">
+        <div><div class="ctl-label">Model</div>
+          <button class="picker" id="picker"><span class="mi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></svg></span><span class="nm" id="pickerName">–</span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button></div>
+        <div><div class="ctl-label">Quality</div><div class="seg" id="qualitySeg" title="Faster is about 2× quicker with the Roformer models, with a small quality trade-off"><span data-v="Best">Best</span><span data-v="Faster">Faster</span></div></div>
+        <div><div class="ctl-label">Format</div><div class="seg" id="formatSeg" title="WAV is lossless; MP3 is 320 kbps"><span data-v="WAV">WAV</span><span data-v="MP3">MP3</span></div></div>
+      </div>
     </div>
   </section>
 
@@ -88,26 +97,53 @@
     </div>
   </section>
 
+  <!-- Model picker -->
+  <div class="pop-scrim hidden" id="popScrim"></div>
+  <div class="pop hidden" id="modelPop">
+    <div class="pop-h"><b>Choose a model</b><span>Models install once, on first use</span></div>
+    <div id="modelList"></div>
+  </div>
+
+  <!-- First run -->
+  <div class="welcome-scrim hidden" id="welcome">
+    <div class="welcome">
+      <div class="logo big"><svg viewBox="0 0 24 24" fill="none" stroke="#002a10" stroke-width="2.6" stroke-linecap="round"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></svg></div>
+      <h2>Welcome to ORemove</h2>
+      <p class="w-sub">Clean vocals and instrumentals from any song, right on your computer.</p>
+      <ol class="w-steps">
+        <li><b>Add a song.</b> Drop audio files on the window, browse for them, or paste a YouTube link.</li>
+        <li><b>Pick a model.</b> The default, BS-Roformer 1297, is the best all-rounder; MelBand Roformer gives the fullest results.</li>
+        <li><b>Separate.</b> You get a vocal and an instrumental stem to play, compare and drag into your DAW.</li>
+      </ol>
+      <div class="w-install" id="wInstall">
+        <div class="grow"><div class="k" id="wModelName">Install the recommended model now?</div><div class="v" id="wModelInfo">BS-Roformer 1297 · 610 MB · otherwise it downloads with your first song</div>
+          <div class="w-bar hidden" id="wBar"><i id="wBarFill"></i></div></div>
+        <button class="btn btn-primary" id="wInstallBtn">Install now</button>
+      </div>
+      <div class="w-foot"><button class="btn btn-ghost" id="wDone">Get started</button></div>
+    </div>
+  </div>
+
   <!-- Sheets -->
   <div class="scrim" id="scrim"></div>
   <aside class="sheet" id="settings">
     <h3>Settings <button class="icon-btn" data-close><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></h3>
-    <div class="label">Model</div>
-    <div id="modelList"></div>
-    <div class="label">Quality</div>
-    <div class="seg" id="qualitySeg"><span data-v="Best">Best</span><span data-v="Faster">Faster</span></div>
-    <div class="hint">Faster is about 2× quicker with BS-Roformer, with a small quality trade-off.</div>
-    <div class="label">Format</div>
-    <div class="seg" id="formatSeg"><span data-v="WAV">WAV · lossless</span><span data-v="MP3">MP3 · 320 kbps</span></div>
-    <div class="label">Save to</div>
-    <div class="folder"><span id="outDir">–</span><a id="changeDir">Change</a></div>
-    <a class="link" id="openOut">Open folder</a>
-    <div class="label">YouTube downloader</div>
-    <div class="folder ytdlp"><span id="ytdlpVersion">yt-dlp</span><a id="ytdlpCheck">Check now</a></div>
-    <div class="seg" id="ytdlpSeg"><span data-v="on">Auto-update</span><span data-v="off">Off</span></div>
-    <div class="hint" id="ytdlpStatus">Keeps YouTube links working when YouTube changes its site.</div>
-    <div class="label">Activity log</div>
-    <pre class="log" id="log"></pre>
+    <div class="group-t">Output</div>
+    <div class="group">
+      <div class="row"><div class="grow"><div class="k">Save stems to</div><div class="path" id="outDir">–</div></div><button class="mini" id="changeDir">Change</button></div>
+      <div class="row link-row-btn" id="openOut"><div class="grow"><div class="k">Open the stems folder</div></div><svg class="chev-r" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></div>
+    </div>
+    <div class="group-t">Models</div>
+    <div class="group">
+      <div class="row"><div class="grow"><div class="k" id="modelsCount">–</div><div class="v" id="modelsInstalled"></div></div><button class="mini" id="chooseModel">Choose</button></div>
+    </div>
+    <div class="group-t">YouTube downloader</div>
+    <div class="group">
+      <div class="row"><div class="grow"><div class="k" id="ytdlpVersion">yt-dlp</div><div class="v"><span class="okdot"></span><span id="ytdlpStatus">Keeps YouTube links working</span></div></div><button class="mini" id="ytdlpCheck">Check now</button></div>
+      <div class="row"><div class="grow"><div class="k">Update automatically</div><div class="v">Keeps YouTube links working when YouTube changes</div></div><button class="switch" id="ytdlpSwitch" role="switch" aria-checked="true"></button></div>
+    </div>
+    <div class="group-t">Activity</div>
+    <div class="group"><pre class="log" id="log"></pre></div>
     <div class="about" id="about">ORemove</div>
   </aside>
   <aside class="sheet" id="history">

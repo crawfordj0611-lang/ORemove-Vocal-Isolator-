@@ -104,7 +104,7 @@ jobs:
       - name: Build with PyInstaller
         run: |
           common=(--noconfirm --windowed --name "$APP_NAME"
-            --add-data "ui:ui" --copy-metadata yt-dlp
+            --add-data "ui:ui" --copy-metadata yt-dlp --collect-all yt_dlp_ejs
             --collect-all webview
             --collect-all audio_separator --copy-metadata audio-separator
             --collect-all onnxruntime --collect-all torchvision --collect-all samplerate
@@ -147,6 +147,20 @@ jobs:
             echo
             echo "Source code: https://github.com/FFmpeg/FFmpeg and https://ffmpeg.org/download.html"
           } > "$docs/FFMPEG-LICENSE.txt"
+
+      # Smaller downloads: drop files only needed to build software against
+      # these libraries (never loaded when the app runs), and list what's left.
+      # (Windows only: changing files inside the signed macOS app would break its signature.)
+      - name: Trim build-only files
+        if: matrix.flavor != 'mac'
+        run: |
+          root="dist/$APP_NAME"
+          before=$(du -sm "$root" | cut -f1)
+          find "$root" -type f \( -name '*.lib' -o -name '*.pdb' -o -name '*.h' -o -name '*.hpp' -o -name '*.cuh' \
+               -o -name '*.cmake' -o -name '*.pyi' -o -name '*.a' \) -delete
+          find "$root" -type d \( -path '*/torch/include' -o -path '*/torch/share/cmake' -o -name '__pycache__' \) -prune -exec rm -rf {} +
+          echo "Trimmed $((before - $(du -sm "$root" | cut -f1))) MB; now $(du -sm "$root" | cut -f1) MB"
+          echo "Largest files:"; find "$root" -type f -size +40M -exec du -m {} + | sort -rn | head -25
 
       # Runs the real packaged app on every model: generates a test tone,
       # separates it, and checks an acapella and an instrumental are written.
@@ -199,7 +213,7 @@ jobs:
 
       - name: Package (Windows portable zip)
         if: matrix.flavor == 'cpu'
-        run: 7z a -tzip -mx=5 ORemove-Windows-CPU.zip "./dist/$APP_NAME"
+        run: 7z a -tzip -mx=9 -mfb=258 -mpass=15 ORemove-Windows-CPU.zip "./dist/$APP_NAME"
 
       - name: Package (Windows installer)
         if: matrix.flavor == 'cuda'
@@ -213,6 +227,11 @@ jobs:
           if (-not $env:APP_VERSION) { $env:APP_VERSION = "0.0.0" }
           & $iscc packaging/installer.iss
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+          # The list of parts Setup.exe downloads, with their SHA-256: <name> <size> <sha256>
+          Get-ChildItem installer-out\*.bin | Sort-Object Name | ForEach-Object {
+            "$($_.Name) $($_.Length) $((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())"
+          } | Set-Content installer-out\ORemove-NVIDIA-GPU-Setup-parts.txt -Encoding ascii
+          Get-Content installer-out\ORemove-NVIDIA-GPU-Setup-parts.txt
           Get-ChildItem installer-out | Format-Table Name, Length
 
       # The runner has no NVIDIA GPU, so with message boxes suppressed (they
@@ -237,7 +256,22 @@ jobs:
           $code = Run-Setup $setup ($quiet + "/SKIPGPUCHECK=1") 20
           if ($code -ne 0 -or -not (Test-Path "$dir\$env:APP_NAME.exe")) { throw "Install failed (exit code $code)" }
           if (-not (Test-Path "$dir\_internal\icon.ico")) { throw "The app icon used by the shortcuts is missing" }
-          Write-Host "Installed OK"
+          Write-Host "Installed OK (parts next to setup)"
+          Run-Setup "$dir\unins000.exe" @("/VERYSILENT", "/SUPPRESSMSGBOXES") 10 | Out-Null
+          if (Test-Path "$dir\$env:APP_NAME.exe") { throw "Uninstall failed" }
+
+          # What users do: download only Setup.exe, which downloads the parts.
+          # Served from this machine (the release isn't published yet).
+          $alone = "$env:RUNNER_TEMP\setup-alone"; New-Item -ItemType Directory -Force $alone | Out-Null
+          Copy-Item $setup $alone
+          $server = Start-Process python -ArgumentList "-m", "http.server", "8123", "--bind", "127.0.0.1", "--directory", "installer-out" -PassThru
+          Start-Sleep 3
+          try {
+            $code = Run-Setup "$alone\ORemove-NVIDIA-GPU-Setup.exe" ($quiet + "/SKIPGPUCHECK=1", "/PARTSURL=http://127.0.0.1:8123/") 30
+          } finally { Stop-Process $server -Force }
+          if ($code -ne 0 -or -not (Test-Path "$dir\$env:APP_NAME.exe")) { throw "Install with downloaded parts failed (exit code $code)" }
+          if (Test-Path "$alone\ORemove-NVIDIA-GPU-Setup-1.bin") { throw "Setup didn't remove the parts it downloaded" }
+          Write-Host "Installed OK (setup downloaded its parts)"
           Run-Setup "$dir\unins000.exe" @("/VERYSILENT", "/SUPPRESSMSGBOXES") 10 | Out-Null
 
       - name: Package (macOS disk image)
@@ -247,7 +281,8 @@ jobs:
           cp -R "dist/$APP_NAME.app" dmg/
           ln -s /Applications dmg/Applications
           cp -R dist/docs "dmg/Read me and licenses"
-          hdiutil create -volname "ORemove" -srcfolder dmg -ov -format UDZO ORemove-macOS-AppleSilicon.dmg
+          # LZMA-compressed disk image (macOS 10.15+): noticeably smaller than the default.
+          hdiutil create -volname "ORemove" -srcfolder dmg -ov -format ULMO ORemove-macOS-AppleSilicon.dmg
           ls -la ORemove-macOS-AppleSilicon.dmg
 
       - name: Publish release

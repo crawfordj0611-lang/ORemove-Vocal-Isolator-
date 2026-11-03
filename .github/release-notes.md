@@ -1,22 +1,20 @@
 **ORemove - AI Powered Vocal Isolator**: clean acapellas and instrumentals from YouTube links and your own audio files.
 
-### What's new in 1.5.5
-- **New license.** ORemove is now licensed under [PolyForm Shield 1.0.0](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/blob/main/LICENSE) with an added permission to share it for free: use it for anything (including paid music work), change it and give it away free (bundling with free software included), but never charge for it. **ORemove is free; if anyone charged you for it, you've been scammed.**
-- **YouTube links keep working on their own.** ORemove checks daily for yt-dlp updates (the YouTube downloader) and installs them automatically; see **Settings → YouTube downloader**.
+### What's new in 1.5.6
+- **A cleaner, darker design.** Model, quality and format sit in one row under the drop area; the model menu shows which models are **Installed**; Settings is reorganised to fit without scrolling.
+- **One-file NVIDIA install.** Download just `ORemove-NVIDIA-GPU-Setup.exe`: it downloads and checks the rest itself.
+- **More reliable YouTube links.** ORemove sets up Deno, the JavaScript runtime YouTube now requires (a one-time 40 MB download on your first link), alongside the automatic yt-dlp updates.
+- **Update notices.** ORemove tells you when a new version is out.
+- **Drag stems into your DAW** straight from the results cards (Windows).
+- **Faster.** WAV stems are written directly, keeping your file's bit depth (24-bit sources give 24-bit stems), and your chosen model loads in the background a few seconds after opening.
+- **Welcome guide** on first launch, with the option to install the recommended model straight away.
+- **No more console windows** flashing up when separation finishes, and smaller downloads.
+- ORemove is licensed under [PolyForm Shield 1.0.0](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/blob/main/LICENSE) with an added permission to share it for free; never charge for it. **If anyone charged you for ORemove, you've been scammed.**
 
 > **⚠️ On Windows, GPU acceleration works with NVIDIA graphics cards only.** AMD and Intel GPUs are not supported; use the CPU edition on those PCs.
 
 ### Windows · NVIDIA GPU edition (NVIDIA graphics cards only)
-**Download all 3 files into the same folder**, then run the `.exe`. GitHub limits files to 2 GB, so the installer comes in parts:
-
-```
-📁 New Folder
-   ├── ORemove-NVIDIA-GPU-Setup.exe
-   ├── ORemove-NVIDIA-GPU-Setup-1.bin
-   └── ORemove-NVIDIA-GPU-Setup-2.bin
-```
-
-Let both `.bin` files finish downloading first, and don't rename them. A missing, renamed (`... (1).bin`) or half-downloaded part causes a "source file is corrupted" error: delete the old copies and download again.
+**Download only `ORemove-NVIDIA-GPU-Setup.exe` and run it.** Setup downloads the rest of ORemove (about 2.8 GB) and checks every part, then removes the downloaded parts once it's installed. The `.bin` files and `ORemove-NVIDIA-GPU-Setup-parts.txt` below are what it downloads: you don't need to download them yourself.
 
 Installs for your user only; no admin needed. The installer warns you if it can't find an NVIDIA card, and installs Microsoft's WebView2 component if needed. Needs a GeForce GTX 900-series or newer card and a current driver.
 

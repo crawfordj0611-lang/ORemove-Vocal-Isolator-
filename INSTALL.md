@@ -55,25 +55,17 @@ If any GPU entry says **NVIDIA**, use the **NVIDIA GPU edition**. Otherwise, use
 
 ## 2. Install the NVIDIA GPU edition
 
-### Step 1: Download all three files
+### Step 1: Download the installer
 
-The installer comes in three parts because GitHub limits each file to 2 GB. **You need all three, in the same folder.**
+Download **[ORemove-NVIDIA-GPU-Setup.exe](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest/download/ORemove-NVIDIA-GPU-Setup.exe)** (2.5 MB). That's the only file you need: during setup it downloads the rest of ORemove (about 2.8 GB) and checks it. The link always points to the newest version.
 
-| File | Size |
-|---|---|
-| [ORemove-NVIDIA-GPU-Setup.exe](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest/download/ORemove-NVIDIA-GPU-Setup.exe) | 2.6 MB |
-| [ORemove-NVIDIA-GPU-Setup-1.bin](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest/download/ORemove-NVIDIA-GPU-Setup-1.bin) | 1.9 GB |
-| [ORemove-NVIDIA-GPU-Setup-2.bin](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest/download/ORemove-NVIDIA-GPU-Setup-2.bin) | 0.9 GB |
+> If your browser says the file "isn't commonly downloaded", open the download menu, choose **Keep**, then **Keep anyway**. This appears because ORemove isn't code-signed.
 
-The links always point to the newest version. You can also download the files from the [Releases page](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest).
-
-> If your browser says a file "isn't commonly downloaded", open the download menu, choose **Keep**, then **Keep anyway**. This appears because ORemove isn't code-signed.
-
-Wait until **all three downloads have finished** before continuing. Your browser saves them to your **Downloads** folder by default, which is fine.
+The release page also lists `.bin` files and a `parts.txt` file: those are what the installer downloads for you, so you can ignore them.
 
 ### Step 2: Run the installer
 
-1. Open the folder with the three files and double-click **ORemove-NVIDIA-GPU-Setup.exe**.
+1. Open your **Downloads** folder and double-click **ORemove-NVIDIA-GPU-Setup.exe**.
 2. If Windows shows **"Windows protected your PC"**, click **More info**, then **Run anyway**.
 3. If the installer says **"No NVIDIA graphics card was found on this PC"**, click **No**. Your PC can't use this edition, so install the [CPU edition](#3-install-the-cpu-edition) instead.
 
@@ -83,10 +75,10 @@ Wait until **all three downloads have finished** before continuing. Your browser
 2. **License Agreement:** read it, select **I accept the agreement**, and click **Next**.
 3. **Destination Location:** keep the default folder and click **Next**. No administrator rights are needed; ORemove installs for your user account only.
 4. **Additional Tasks:** tick **Create a desktop shortcut** if you want one, then click **Next**.
-5. **Ready to Install:** click **Install**. Installing takes a few minutes.
+5. **Ready to Install:** click **Install**. Setup first downloads the rest of ORemove (about 2.8 GB; a few minutes on a fast connection), then installs it.
 6. **Finish:** leave **Launch ORemove** ticked and click **Finish**.
 
-You can delete the three downloaded setup files afterwards.
+Setup removes the parts it downloaded once it's finished. You can delete `ORemove-NVIDIA-GPU-Setup.exe` too.
 
 ORemove is now in your **Start Menu**. Continue with [First launch](#5-first-launch).
 
@@ -232,7 +224,8 @@ To open the program folder of the NVIDIA GPU edition, press **Win + R**, type `%
 | **Mac: "You can't open ORemove because this application is not supported on this Mac"** | Your Mac has an Intel chip. Only Apple Silicon Macs (M1 or newer) are supported. |
 | **"Windows protected your PC"** | Click **More info**, then **Run anyway**. It appears because ORemove isn't code-signed. |
 | **Browser blocks the download** ("isn't commonly downloaded") | In the browser's download list, choose **Keep**, then **Keep anyway**. |
-| **The installer asks for a disk or a `.bin` file** ("Setup needs the next disk") | A `.bin` part is missing, still downloading, or in a different folder. Put all three files in the same folder, then click **OK**, or **Browse** to the folder that holds them. |
+| **Setup says it couldn't download the rest of ORemove** | Check your internet connection and run setup again; it picks up where it left off. If it keeps failing, download every `ORemove-NVIDIA-GPU-Setup` file from the release page (the `.exe` and the `.bin` parts) into one folder and run the `.exe` from there. |
+| **The installer asks for a disk or a `.bin` file** ("Setup needs the next disk") | The downloaded parts are missing or in a different folder. Run `ORemove-NVIDIA-GPU-Setup.exe` again so it can download them. |
 | **The installer says no NVIDIA graphics card was found** | Your PC has no NVIDIA card Windows can see. Use the [CPU edition](#3-install-the-cpu-edition). |
 | **The badge says "No NVIDIA GPU"** on a PC with an NVIDIA card | Update your NVIDIA driver from [nvidia.com/drivers](https://www.nvidia.com/drivers) or the NVIDIA app, restart your PC, then open ORemove again. **Settings → Activity log** in the app shows more. |
 | **Antivirus quarantines ORemove** | Some antivirus products flag unsigned apps built with PyInstaller by mistake. Restore the file and add an exception for the ORemove folder, or download it again from the official [Releases page](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest). |

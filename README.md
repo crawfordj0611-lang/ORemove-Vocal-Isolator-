@@ -21,7 +21,7 @@
 - **Drag, drop, done.** Audio files (MP3, WAV, FLAC, M4A and more), video files, or a YouTube link; one song or a whole batch.
 - **Top-rated models.** BS-Roformer and MelBand Roformer for the cleanest results, plus a fast MDX-Net option.
 - **GPU accelerated.** NVIDIA GPUs on Windows and Apple Silicon on Mac, with 16-bit processing for extra speed.
-- **Listen instantly.** Waveforms, in-app playback, and A/B switching between vocals and instrumental.
+- **Listen instantly.** Waveforms, in-app playback, A/B switching between vocals and instrumental, and drag-and-drop of stems straight into your DAW (Windows).
 - **Lossless and private.** WAV or 320 kbps MP3 output; everything runs on your computer.
 
 ## Download
@@ -30,23 +30,14 @@
 
 | Edition | For | Download |
 |---|---|---|
-| **Windows · NVIDIA GPU** | PCs with an NVIDIA GeForce GTX 900-series or newer | 3 files (see below) |
+| **Windows · NVIDIA GPU** | PCs with an NVIDIA GeForce GTX 900-series or newer | `ORemove-NVIDIA-GPU-Setup.exe` |
 | **Windows · CPU** | Any 64-bit Windows PC, including AMD and Intel graphics | `ORemove-Windows-CPU.zip` |
 | **macOS** | Apple Silicon (M1 or newer), macOS 13+ | `ORemove-macOS-AppleSilicon.dmg` |
 
 On Windows, GPU acceleration works with **NVIDIA graphics cards only**. On other PCs, use the CPU edition: it works everywhere, but is much slower.
 
-> [!IMPORTANT]
-> **NVIDIA GPU edition: download all 3 files into the same folder**, then run the `.exe`. GitHub limits files to 2 GB, so the installer comes in parts:
->
-> ```
-> 📁 New Folder
->    ├── ORemove-NVIDIA-GPU-Setup.exe
->    ├── ORemove-NVIDIA-GPU-Setup-1.bin
->    └── ORemove-NVIDIA-GPU-Setup-2.bin
-> ```
->
-> Let both `.bin` files finish downloading first, and don't rename them. A missing, renamed (`... (1).bin`) or half-downloaded part causes a "source file is corrupted" error: delete the old copies and download again.
+> [!NOTE]
+> **NVIDIA GPU edition: just download `ORemove-NVIDIA-GPU-Setup.exe` and run it.** Setup downloads the rest of ORemove (about 2.8 GB) and checks it as it installs. The `.bin` and `parts.txt` files on the release page are what it downloads, so you can ignore them.
 
 > [!CAUTION]
 > **ORemove is free.** If anyone charged you for it, you've been scammed. Only download it from the [official releases page](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases).
@@ -71,11 +62,11 @@ Models download once, on first use. **Quality: Faster** roughly halves Roformer 
 | **Memory** | 16 GB | 8 GB minimum, 16 GB recommended | 8 GB minimum, 16 GB recommended |
 | **Disk** | ~6 GB + up to 3 GB of models | ~2 GB + up to 3 GB of models | ~2 GB + up to 3 GB of models |
 
-Stems are saved to **Music/ORemove**. For help, see [installation problems](INSTALL.md#9-installation-problems).
+Stems are saved to **Music/ORemove**. ORemove tells you when a new version is available. For help, see [installation problems](INSTALL.md#9-installation-problems).
 
 ## YouTube links
 
-YouTube downloads use [yt-dlp](https://github.com/yt-dlp/yt-dlp), which needs updating whenever YouTube changes its site. ORemove checks for yt-dlp updates daily and installs them automatically (see **Settings → YouTube downloader**). Your own audio files are never affected.
+YouTube downloads use [yt-dlp](https://github.com/yt-dlp/yt-dlp), which needs updating whenever YouTube changes its site. ORemove checks for yt-dlp updates daily and installs them automatically (see **Settings → YouTube downloader**), and sets up [Deno](https://deno.com), the JavaScript runtime YouTube now requires, the first time you use a link (a one-time 40 MB download). Your own audio files are never affected.
 
 ## Running from source
 

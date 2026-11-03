@@ -28,9 +28,10 @@ function whenApiReady(fn) {
 whenApiReady(async () => {
   api = window.pywebview.api;
   state = await api.get_state();
-  $('about').textContent = `ORemove ${state.version} · AI Powered Vocal Isolator`;
+  $('about').textContent = `ORemove ${state.version} - newmoneymadeit™`;
   renderSettings();
   $('ytdlpVersion').textContent = `yt-dlp ${state.ytdlp}`;
+  if (state.welcome) showWelcome();
   if (!state.ffmpeg) showStartError('FFmpeg is missing, so audio can\'t be read or written. Reinstall ORemove.');
   listenForEvents();
   api.ready();
@@ -55,7 +56,7 @@ $('scrim').onclick = closeSheets;
 document.querySelectorAll('[data-close]').forEach(b => b.onclick = closeSheets);
 document.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openSheet(b.dataset.open));
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeSheets();
+  if (e.key === 'Escape') { closeSheets(); closePicker(); }
   if (e.key === ' ' && $('results').classList.contains('active') && document.activeElement.tagName !== 'INPUT') {
     e.preventDefault(); togglePlay(abKind);
   }
@@ -64,21 +65,54 @@ document.addEventListener('keydown', e => {
 // ---------- settings ----------
 function renderSettings() {
   const s = state.settings;
-  $('modelList').innerHTML = state.models.map(m => `
-    <div class="model ${m.filename === s.model ? 'on' : ''}" data-model="${m.filename}">
-      <div class="radio"></div>
-      <div><div class="n">${esc(m.name)}</div><div class="d">${esc(m.best_for)}</div></div>
-      <div class="s">${esc(m.size)}</div>
-    </div>`).join('');
-  document.querySelectorAll('.model').forEach(el => el.onclick = () => saveSettings({ model: el.dataset.model }));
+  const m = state.models.find(x => x.filename === s.model) || state.models[0];
+  $('pickerName').textContent = m.name;
+  $('picker').title = `${m.name} · ${m.best_for}`;
   setSeg('qualitySeg', s.quality, v => saveSettings({ quality: v }));
   setSeg('formatSeg', s.format, v => saveSettings({ format: v }));
   $('outDir').textContent = s.output_dir;
-  setSeg('ytdlpSeg', s.ytdlp_auto ? 'on' : 'off', v => saveSettings({ ytdlp_auto: v === 'on' }));
-  const m = state.models.find(x => x.filename === s.model) || state.models[0];
-  $('chipModel').textContent = m.name; $('chipBest').textContent = m.best_for;
-  $('chipQuality').textContent = s.quality; $('chipFormat').textContent = s.format;
+  $('outDir').title = s.output_dir;
+  const sw = $('ytdlpSwitch');
+  sw.classList.toggle('on', !!s.ytdlp_auto);
+  sw.setAttribute('aria-checked', String(!!s.ytdlp_auto));
+  const installed = state.models.filter(x => x.installed);
+  $('modelsCount').textContent = `${installed.length} of ${state.models.length} installed`;
+  $('modelsInstalled').innerHTML = installed.length
+    ? '<span class="okdot"></span>' + installed.map(x => esc(x.name)).join(' · ')
+    : 'Models install with your first song';
+  renderModelList();
 }
+function renderModelList() {
+  const s = state.settings;
+  const row = x => `
+    <div class="opt ${x.filename === s.model ? 'on' : ''}" data-model="${x.filename}">
+      <svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>
+      <div><div class="n">${esc(x.name)}</div><div class="d">${esc(x.best_for)}</div></div>
+      <div class="s">${x.bundled ? 'Built in' : esc(x.size)}${x.installed ? '<em>Installed</em>'
+        : state.installing === x.filename ? '<i>Installing…</i>' : '<i>Not installed</i>'}</div>
+    </div>`;
+  const main = state.models.filter(x => !x.bundled), fast = state.models.filter(x => x.bundled);
+  $('modelList').innerHTML = main.map(row).join('') + (fast.length ? '<div class="pop-sep"></div>' + fast.map(row).join('') : '');
+  $('modelList').querySelectorAll('.opt').forEach(el => el.onclick = () => { closePicker(); saveSettings({ model: el.dataset.model }); });
+}
+function openPicker() {
+  if (running) return;
+  closeSheets();
+  renderModelList();
+  const pop = $('modelPop'), r = $('picker').getBoundingClientRect();
+  pop.classList.remove('hidden'); $('popScrim').classList.remove('hidden'); $('picker').classList.add('open');
+  const h = pop.offsetHeight, w = pop.offsetWidth;
+  // Open upward when there's no room below (the usual case: the picker sits low in the window).
+  const top = r.bottom + 8 + h < innerHeight ? r.bottom + 8 : Math.max(10, r.top - h - 8);
+  pop.style.top = top + 'px';
+  pop.style.left = Math.min(Math.max(10, r.left), innerWidth - w - 10) + 'px';
+}
+function closePicker() {
+  $('modelPop').classList.add('hidden'); $('popScrim').classList.add('hidden'); $('picker').classList.remove('open');
+}
+$('picker').onclick = () => $('modelPop').classList.contains('hidden') ? openPicker() : closePicker();
+$('popScrim').onclick = closePicker;
+$('chooseModel').onclick = () => openPicker();
 function setSeg(id, value, onPick) {
   $(id).querySelectorAll('span').forEach(sp => {
     sp.classList.toggle('on', sp.dataset.v === value);
@@ -97,10 +131,59 @@ $('changeDir').onclick = async () => {
 };
 $('openOut').onclick = () => api.open_output();
 $('ytdlpCheck').onclick = () => api.check_ytdlp();
+$('ytdlpSwitch').onclick = () => saveSettings({ ytdlp_auto: !state.settings.ytdlp_auto });
 function setYtdlp(ev) {
   $('ytdlpVersion').textContent = `yt-dlp ${ev.version}`;
   $('ytdlpStatus').textContent = ev.status;
+  document.querySelector('#ytdlpStatus').previousElementSibling.classList.toggle('off', /off|couldn/i.test(ev.status));
 }
+
+// ---------- first run ----------
+function showWelcome() {
+  const rec = state.models[0];
+  $('wModelName').textContent = rec.installed ? `${rec.name} is installed` : 'Install the recommended model now?';
+  $('wModelInfo').textContent = rec.installed ? 'You\'re ready to go.' : `${rec.name} · ${rec.size} · otherwise it downloads with your first song`;
+  $('wInstallBtn').classList.toggle('hidden', rec.installed);
+  $('welcome').classList.remove('hidden');
+}
+$('wInstallBtn').onclick = async () => {
+  const rec = state.models[0];
+  const r = await api.install_model(rec.filename);
+  if (!r.ok) { $('wModelInfo').textContent = r.error; return; }
+  state.installing = rec.filename;
+  $('wInstallBtn').disabled = true; $('wInstallBtn').textContent = 'Installing…';
+  $('wBar').classList.remove('hidden');
+  $('wModelInfo').textContent = 'Downloading… you can start using ORemove meanwhile.';
+};
+$('wDone').onclick = () => { $('welcome').classList.add('hidden'); api.welcome_done(); input.focus(); };
+function onInstall(ev) {
+  $('wBarFill').style.width = ev.percent + '%';
+  $('wModelInfo').textContent = `Downloading… ${ev.percent}% of ${ev.mb} MB`;
+}
+function onInstalled(ev) {
+  state.installing = null; state.models = ev.models; renderSettings();
+  const m = state.models.find(x => x.filename === ev.model);
+  $('wBarFill').style.width = '100%';
+  $('wModelName').textContent = `${m ? m.name : 'Model'} is installed`;
+  $('wModelInfo').textContent = 'Ready: your first song starts straight away.';
+  $('wInstallBtn').classList.add('hidden');
+  appendLog(`Installed ${m ? m.name : ev.model}.`);
+}
+function onInstallError(ev) {
+  state.installing = null; renderModelList();
+  $('wInstallBtn').disabled = false; $('wInstallBtn').textContent = 'Try again';
+  $('wModelInfo').textContent = `Couldn't install: ${ev.message}`;
+}
+
+// ---------- new version ----------
+let update = null;
+function showUpdate(ev) {
+  update = ev;
+  $('updateText').textContent = `ORemove ${ev.version} is available.`;
+  $('updateBanner').classList.remove('hidden');
+}
+$('updateGet').onclick = () => update && api.open_release(update.url);
+$('updateDismiss').onclick = () => { $('updateBanner').classList.add('hidden'); if (update) api.dismiss_update(update.version); };
 
 // ---------- choosing a source ----------
 const input = $('source');
@@ -167,7 +250,8 @@ function resetProcessing(sources) {
   tickTimer = setInterval(() => {
     $('elapsed').textContent = fmt((Date.now() - startedAt) / 1000) + ' elapsed' + (etaText ? ' · ' + etaText : '');
   }, 500);
-  document.querySelectorAll('.model, .seg').forEach(el => el.classList.add('disabled'));
+  document.querySelectorAll('.picker, .seg, .switch').forEach(el => el.classList.add('disabled'));
+  closePicker();
 }
 function setProgress(v) {
   const wrap = $('ringWrap');
@@ -199,7 +283,7 @@ function updateEta(v) {
 function finishRun() {
   running = false;
   clearInterval(tickTimer);
-  document.querySelectorAll('.model, .seg').forEach(el => el.classList.remove('disabled'));
+  document.querySelectorAll('.picker, .seg, .switch').forEach(el => el.classList.remove('disabled'));
 }
 
 // ---------- events from Python ----------
@@ -220,6 +304,11 @@ function handle(ev) {
     case 'log': appendLog(ev.text); break;
     case 'device': setDevice(ev); break;
     case 'ytdlp': setYtdlp(ev); break;
+    case 'update': showUpdate(ev); break;
+    case 'install': onInstall(ev); break;
+    case 'installed': onInstalled(ev); break;
+    case 'install_error': onInstallError(ev); break;
+    case 'models': state.models = ev.models; renderSettings(); break;
     case 'dropped': if (!running && ev.paths.length) { selectedFiles = []; input.value = ''; start(ev.paths); } break;
     case 'title': $('trackTitle').textContent = ev.text; break;
     case 'stage': {
@@ -318,6 +407,7 @@ function makeCard(stem) {
     <div class="card-actions">
       <button class="btn btn-ghost" data-act="reveal">Show in folder</button>
       <button class="btn btn-ghost" data-act="open">Open in player</button>
+      ${state.platform === 'win' ? `<span class="drag" title="Drag this stem into your DAW, a folder or another app">${ICON_GRIP}Drag to DAW</span>` : ''}
     </div>`;
   const bars = barsSvg(stem.peaks);
   card.querySelector('.bars').innerHTML = bars;
@@ -341,6 +431,20 @@ function makeCard(stem) {
   };
   card.querySelector('[data-act="reveal"]').onclick = () => api.reveal(stem.path);
   card.querySelector('[data-act="open"]').onclick = () => { stopAll(); api.open_path(stem.path); };
+  const handle = card.querySelector('.drag');
+  if (handle) {
+    // Hold and move: Windows takes over the drag, so the file can be dropped anywhere.
+    handle.addEventListener('mousedown', down => {
+      if (down.button !== 0) return;
+      down.preventDefault();
+      const move = e => {
+        if (Math.abs(e.clientX - down.clientX) + Math.abs(e.clientY - down.clientY) < 4) return;
+        done(); api.drag_out(stem.path);
+      };
+      const done = () => { removeEventListener('mousemove', move); removeEventListener('mouseup', done); };
+      addEventListener('mousemove', move); addEventListener('mouseup', done);
+    });
+  }
   players[stem.kind] = { audio, card };
   return card;
 }
@@ -401,5 +505,6 @@ function barsSvg(peaks) {
 function fmt(sec) { sec = Math.max(0, Math.floor(sec)); return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`; }
 function fmtDuration(sec) { return sec < 60 ? `${Math.round(sec)} s` : `${Math.floor(sec / 60)} min ${Math.round(sec % 60)} s`; }
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+const ICON_GRIP = '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>';
 const ICON_PLAY = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';

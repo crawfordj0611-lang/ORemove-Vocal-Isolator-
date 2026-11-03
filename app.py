@@ -62,7 +62,7 @@ from urllib.parse import unquote
 
 APP_TITLE = "ORemove"
 APP_TAGLINE = "AI Powered Vocal Isolator"
-APP_VERSION = "1.5.5"
+APP_VERSION = "1.5.6"
 
 # True when running as the packaged app (built with PyInstaller).
 FROZEN = getattr(sys, "frozen", False)
@@ -123,11 +123,11 @@ MODELS = [
                 "model_bs_roformer_ep_368_sdr_12.9628.ckpt", "610 MB"),
     # MelBand Roformer by becruily: audio-separator's recommended presets rate the
     # instrumental model the highest-scoring instrumental model (SDR 17.55).
-    ModelOption("MelBand Roformer Inst", "Fullest instrumentals (becruily)",
+    ModelOption("MelBand Roformer Inst", "Fullest instrumentals",
                 "mel_band_roformer_instrumental_becruily.ckpt", "871 MB"),
-    ModelOption("MelBand Roformer Vocals", "Fullest acapellas (becruily)",
+    ModelOption("MelBand Roformer Vocals", "Fullest acapellas",
                 "mel_band_roformer_vocals_becruily.ckpt", "871 MB"),
-    ModelOption("MDX-Net Inst HQ 3", "Fastest",
+    ModelOption("MDX-Net Inst HQ 3", "Fastest · lighter quality",
                 "UVR-MDX-NET-Inst_HQ_3.onnx", "Included"),
 ]
 MODELS_BY_FILE = {m.filename: m for m in MODELS}
@@ -213,6 +213,20 @@ AUDIO_EXTENSIONS = ("mp3", "wav", "flac", "m4a", "aac", "ogg", "opus", "wma", "a
 # Keeps FFmpeg from flashing a console window when run from the windowed .exe.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0
 
+if sys.platform.startswith("win"):
+    # Libraries ORemove uses also start programs (pydub runs FFmpeg to save MP3
+    # stems, yt-dlp runs FFmpeg and Deno) without hiding their console window,
+    # which flashed up on screen. Hide it for every program started, unless the
+    # caller chose its own flags.
+    _popen_init = subprocess.Popen.__init__
+
+    def _popen_init_no_window(self, *args, **kwargs):
+        if not kwargs.get("creationflags"):
+            kwargs["creationflags"] = NO_WINDOW
+        _popen_init(self, *args, **kwargs)
+
+    subprocess.Popen.__init__ = _popen_init_no_window
+
 
 def looks_like_url(text: str) -> bool:
     return bool(re.match(r"^(https?://|www\.)", text.strip(), re.IGNORECASE)) or is_youtube_url(text)
@@ -272,6 +286,7 @@ YTDLP_INDEX = "https://pypi.org/pypi/yt-dlp/json"
 YTDLP_CHECK_EVERY = 24 * 3600  # seconds between automatic checks
 _YTDLP_WHEEL = re.compile(r"^yt_dlp-(\d+(?:\.\d+)*)-py3-none-any\.whl$")
 _ytdlp_lock = threading.RLock()  # held while yt-dlp runs or is swapped
+_deno_lock = threading.Lock()
 _ytdlp = {"wheel": None, "bundled": None, "auto": True}
 
 
@@ -370,7 +385,7 @@ def use_ytdlp(log=lambda _text: None) -> str:
     return bundled
 
 
-def _download(url: str, timeout: float = 30) -> bytes:
+def _download(url: str, timeout: float = 30, on_progress=None) -> bytes:
     import ssl
     import urllib.request
     cafile = None
@@ -383,7 +398,15 @@ def _download(url: str, timeout: float = 30) -> bytes:
     context = ssl.create_default_context(cafile=cafile)
     request = urllib.request.Request(url, headers={"User-Agent": f"ORemove/{APP_VERSION}"})
     with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
-        return response.read()
+        if on_progress is None:
+            return response.read()
+        total = int(response.headers.get("Content-Length") or 0)
+        chunks, done = [], 0
+        while chunk := response.read(1 << 18):
+            chunks.append(chunk)
+            done += len(chunk)
+            on_progress(done, total)
+        return b"".join(chunks)
 
 
 def update_ytdlp(force: bool = False, log=lambda _text: None) -> dict:
@@ -436,6 +459,115 @@ def update_ytdlp(force: bool = False, log=lambda _text: None) -> dict:
 
 
 sys.meta_path.insert(0, _YtDlpWheelFinder())
+
+
+# --------------------------------------------------------------------------- #
+# Deno: the JavaScript runtime yt-dlp needs for YouTube
+# --------------------------------------------------------------------------- #
+# YouTube now makes downloaders solve JavaScript challenges; without a
+# JavaScript runtime yt-dlp misses formats and, increasingly, fails. Deno
+# (about 40 MB) is downloaded once, from Deno's official servers, the first
+# time a YouTube link is used, and checked against its published SHA-256.
+
+DENO_DIR = DATA_DIR / "deno"
+DENO_RELEASES = "https://dl.deno.land"
+
+
+def _deno_target() -> str | None:
+    import platform
+    machine = platform.machine().lower()
+    arm = machine in ("arm64", "aarch64")
+    if sys.platform.startswith("win"):
+        return None if arm else "x86_64-pc-windows-msvc"
+    if MACOS:
+        return "aarch64-apple-darwin" if arm else "x86_64-apple-darwin"
+    if sys.platform.startswith("linux"):
+        return "aarch64-unknown-linux-gnu" if arm else "x86_64-unknown-linux-gnu"
+    return None
+
+
+def deno_path() -> Path | None:
+    """The downloaded Deno, if any."""
+    exe = DENO_DIR / ("deno.exe" if sys.platform.startswith("win") else "deno")
+    return exe if exe.is_file() else None
+
+
+def install_deno(on_progress=None) -> str:
+    """Download and verify Deno. Returns its version. Raises on failure."""
+    import hashlib
+    import zipfile
+    target = _deno_target()
+    if not target:
+        raise RuntimeError("no Deno build for this computer")
+    version = _download(f"{DENO_RELEASES}/release-latest.txt").decode().strip()
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", version):
+        raise RuntimeError(f"unexpected Deno version {version!r}")
+    name = f"deno-{target}.zip"
+    checksum = _download(f"{DENO_RELEASES}/release/{version}/{name}.sha256sum").decode().split()[0].lower()
+    data = _download(f"{DENO_RELEASES}/release/{version}/{name}", timeout=120, on_progress=on_progress)
+    if hashlib.sha256(data).hexdigest() != checksum:
+        raise RuntimeError("the downloaded Deno didn't match its published checksum")
+    exe_name = "deno.exe" if sys.platform.startswith("win") else "deno"
+    DENO_DIR.mkdir(parents=True, exist_ok=True)
+    temp = DENO_DIR / (exe_name + ".part")
+    import io
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        temp.write_bytes(archive.read(exe_name))
+    if not sys.platform.startswith("win"):
+        temp.chmod(0o755)
+    os.replace(temp, DENO_DIR / exe_name)
+    (DENO_DIR / "version.txt").write_text(version, encoding="utf-8")
+    return version
+
+
+def ytdlp_js_options() -> dict:
+    """yt-dlp options that point it at the downloaded Deno."""
+    exe = deno_path()
+    if not exe:
+        return {}
+    # The challenge scripts come from the bundled yt-dlp-ejs package; if an
+    # updated yt-dlp needs a newer version, yt-dlp fetches it from yt-dlp's
+    # own GitHub releases (and caches it).
+    return {"js_runtimes": {"deno": {"path": str(exe)}}, "remote_components": {"ejs:github"}}
+
+
+# --------------------------------------------------------------------------- #
+# New ORemove versions
+# --------------------------------------------------------------------------- #
+
+REPO = "crawfordj0611-lang/ORemove-Vocal-Isolator-"
+RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
+UPDATE_FILE = DATA_DIR / "update-check.json"
+
+
+def check_app_update(force: bool = False) -> dict | None:
+    """
+    Ask GitHub, at most once a day, whether a newer ORemove has been released.
+    Returns {"version", "url"} for a newer version, or None.
+    """
+    try:
+        saved = json.loads(UPDATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        saved = {}
+    if force or time.time() - saved.get("checked", 0) > 24 * 3600:
+        release = json.loads(_download(f"https://api.github.com/repos/{REPO}/releases/latest"))
+        saved = {"checked": time.time(), "latest": str(release.get("tag_name", "")).lstrip("v"),
+                 "url": release.get("html_url") or RELEASES_PAGE}
+        try:
+            UPDATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            UPDATE_FILE.write_text(json.dumps(saved), encoding="utf-8")
+        except OSError:
+            pass
+    latest = saved.get("latest") or ""
+    if re.fullmatch(r"\d+(\.\d+)*", latest) and _version_key(latest) > _version_key(APP_VERSION):
+        url = saved.get("url") or RELEASES_PAGE
+        return {"version": latest, "url": url if url.startswith(f"https://github.com/{REPO}/") else RELEASES_PAGE}
+    return None
+
+
+def model_installed(filename: str) -> bool:
+    """True once a model is on this computer (downloaded, or bundled with the app)."""
+    return (MODEL_DIR / filename).exists() or (BUNDLE_DIR / "models" / filename).exists()
 
 
 def detect_device() -> str:
@@ -710,6 +842,7 @@ class ExtractionPipeline:
         self._index, self._count = 0, 1  # position in the current batch
         self._shown = 0.0                 # highest progress shown for the current item
         self.run_device = ""              # what the loaded model runs on, e.g. "RTX 4070 SUPER"
+        self.on_model_download = None     # optional (percent, total bytes) callback
         # Seconds spent in each step, for the breakdown on the results screen.
         self.timings = {"audio": 0.0, "engine": 0.0, "model_download": 0.0, "model_load": 0.0,
                         "separate": 0.0, "save": 0.0}
@@ -735,6 +868,7 @@ class ExtractionPipeline:
 
     def download_youtube(self, url: str, download_dir: Path, wav: Path) -> str:
         """Download a YouTube video's audio to `wav`, with the newest yt-dlp. Returns its title."""
+        self._ensure_deno()
         with _ytdlp_lock:  # yt-dlp mustn't be updated while it runs
             for attempt in (1, 2):
                 version = use_ytdlp(self.log)
@@ -763,6 +897,37 @@ class ExtractionPipeline:
                     download_dir.mkdir(exist_ok=True)
                     self.log("Trying again with the updated yt-dlp...")
 
+    def _ensure_deno(self):
+        """The first YouTube link: download Deno, which yt-dlp needs for YouTube."""
+        if deno_path() or not _deno_target():
+            return
+        with _deno_lock:
+            if deno_path():
+                return
+            self.log("Setting up the YouTube downloader (one-time download of Deno, about 40 MB)...")
+            self.stage("download", "Setting up the YouTube downloader (one time only)")
+            shown = {"pct": -1}
+
+            def on_progress(done, total):
+                self.check_cancel()
+                if total:
+                    pct = int(done * 100 / total)
+                    if pct != shown["pct"]:
+                        shown["pct"] = pct
+                        self.progress(DOWNLOAD_SHARE * done / total)
+                        self.stage("download", f"Setting up the YouTube downloader, one time only ({pct}%)")
+                else:
+                    self.progress(None)
+
+            try:
+                self.log(f"Deno {install_deno(on_progress)} installed.")
+            except Cancelled:
+                raise
+            except Exception as exc:
+                # YouTube may still work without it, just less reliably.
+                self.log(f"Couldn't set up Deno ({exc}); trying YouTube without it.")
+            self.progress(0)
+
     def fetch_title(self, url: str) -> str:
         import yt_dlp
         from yt_dlp.utils import DownloadError
@@ -774,6 +939,7 @@ class ExtractionPipeline:
             "noplaylist": True,          # a watch?v=..&list=.. URL means just this video
             "skip_download": True,
             "logger": _YtDlpLogger(self.log),
+            **ytdlp_js_options(),
         }
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
@@ -831,6 +997,7 @@ class ExtractionPipeline:
             "fragment_retries": 5,
             "logger": _YtDlpLogger(self.log),
             "progress_hooks": [on_progress],
+            **ytdlp_js_options(),
             # Decode straight to uncompressed WAV so no extra lossy step is added
             # before separation.
             "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "wav"}],
@@ -1039,6 +1206,9 @@ class ExtractionPipeline:
             output_dir=str(stems_dir),
             output_format=job.output_format,
             output_bitrate="320k" if job.output_format == "MP3" else None,
+            # WAV stems are written directly (keeping the source's bit depth),
+            # without starting FFmpeg for each one; MP3 needs FFmpeg's encoder.
+            use_soundfile=job.output_format == "WAV",
             **options,
         )
 
@@ -1057,6 +1227,8 @@ class ExtractionPipeline:
             if pct == shown["pct"]:
                 return
             shown["pct"] = pct
+            if self.on_model_download:
+                self.on_model_download(pct, total)
             self.progress(DOWNLOAD_SHARE + (MODEL_LOAD_AT - DOWNLOAD_SHARE) * pct / 100)
             self.stage("separate", f"Downloading model, first use only ({pct}% of {total / 1_048_576:.0f} MB)")
             if pct % 10 == 0:
@@ -1395,6 +1567,7 @@ class Api:
             "ytdlp_auto": settings.get("ytdlp_auto") is not False,
         }
         _ytdlp["auto"] = self._settings["ytdlp_auto"]
+        self._installing: str | None = None  # model being installed from the welcome card
 
     # Events -----------------------------------------------------------------
 
@@ -1472,7 +1645,7 @@ class Api:
         model in the background, so separation can begin straight away. Only
         for models already downloaded (never starts a large download by itself).
         """
-        if self._warming or (self._worker and self._worker.is_alive()):
+        if self._warming or self._installing or (self._worker and self._worker.is_alive()):
             return
         s = self._settings
         job = Job(sources=[], model_file=s["model"], output_format=s["format"],
@@ -1512,15 +1685,101 @@ class Api:
 
     # Settings -----------------------------------------------------------------
 
+    def models(self) -> list[dict]:
+        return [{"name": m.name, "best_for": m.best_for, "filename": m.filename, "size": m.size,
+                 "installed": model_installed(m.filename), "bundled": m.size == "Included"}
+                for m in MODELS]
+
     def get_state(self) -> dict:
+        settings = load_settings()
         return {
             "version": APP_VERSION,
-            "models": [{"name": m.name, "best_for": m.best_for, "filename": m.filename, "size": m.size}
-                       for m in MODELS],
+            "models": self.models(),
             "settings": dict(self._settings),
             "ffmpeg": ffmpeg_available(),
             "ytdlp": ytdlp_version(),
+            "platform": "win" if sys.platform.startswith("win") else "mac" if MACOS else "other",
+            "welcome": not settings.get("welcomed"),
+            "installing": self._installing,
         }
+
+    # First run, models and updates ---------------------------------------------
+
+    def welcome_done(self):
+        save_settings({**load_settings(), **self._settings, "welcomed": True})
+
+    def install_model(self, filename: str) -> dict:
+        """Download a model now (from the welcome card), and keep it loaded for the first song."""
+        if filename not in MODELS_BY_FILE:
+            return {"ok": False, "error": "Unknown model."}
+        if self._installing or (self._worker and self._worker.is_alive()):
+            return {"ok": False, "error": "Busy, try again in a moment."}
+        self._installing = filename
+        s = self._settings
+        job = Job(sources=[], model_file=filename, output_format=s["format"],
+                  output_dir=Path(s["output_dir"]), faster=s["quality"] == "Faster")
+
+        def run():
+            try:
+                pipeline = ExtractionPipeline(log=lambda text: self.emit("log", text=text),
+                                              progress=lambda _v: None, engine=self.on_engine)
+                pipeline.on_model_download = lambda pct, total: self.emit(
+                    "install", model=filename, percent=pct, mb=round(total / 1_048_576))
+                work_dir = Path(tempfile.gettempdir()) / "oremove_warmup"
+                work_dir.mkdir(exist_ok=True)
+                pipeline._load_separator(job, work_dir)
+                self.emit("installed", model=filename, models=self.models())
+                self._schedule_idle_release()
+            except Exception as exc:
+                self.emit("install_error", model=filename, message=str(exc))
+            finally:
+                self._installing = None
+
+        threading.Thread(target=run, daemon=True).start()
+        return {"ok": True}
+
+    def check_app_update(self):
+        """At most once a day: tell the page when a newer ORemove is available."""
+        def check():
+            try:
+                update = check_app_update()
+            except Exception as exc:
+                self.emit("log", text=f"Couldn't check for a new ORemove version: {exc}")
+                return
+            if update and load_settings().get("skip_update") != update["version"]:
+                self.emit("update", **update)
+                self.emit("log", text=f"ORemove {update['version']} is available.")
+
+        threading.Thread(target=check, daemon=True).start()
+
+    def dismiss_update(self, version: str):
+        save_settings({**load_settings(), **self._settings, "skip_update": str(version)})
+
+    def open_release(self, url: str = RELEASES_PAGE):
+        import webbrowser
+        webbrowser.open(url if str(url).startswith(f"https://github.com/{REPO}/") else RELEASES_PAGE)
+
+    def drag_out(self, path: str) -> bool:
+        """
+        Start dragging a stem file out of the window, e.g. into a DAW
+        (Windows; called while the mouse button is held down).
+        """
+        file = Path(path)
+        if not (sys.platform.startswith("win") and self._window and file.is_file()):
+            return False
+        try:
+            from System import Action, Array, String
+            from System.Windows.Forms import DataFormats, DataObject, DragDropEffects
+            form = self._window.native
+
+            def start_drag():
+                form.DoDragDrop(DataObject(DataFormats.FileDrop, Array[String]([str(file)])), DragDropEffects.Copy)
+
+            form.Invoke(Action(start_drag))
+            return True
+        except Exception as exc:
+            self.emit("log", text=f"Dragging the file out didn't work: {exc}")
+            return False
 
     def save_settings(self, change: dict) -> dict:
         allowed = {"model": MODELS_BY_FILE, "quality": QUALITY_MODES, "format": OUTPUT_FORMATS}
@@ -1535,7 +1794,7 @@ class Api:
                     self.check_ytdlp(force=False)
                 else:
                     self.emit("ytdlp", version=bundled_ytdlp_version(), status="Automatic updates off")
-        save_settings(dict(self._settings))
+        save_settings({**load_settings(), **self._settings})  # keep other saved values (welcome, input folder)
         return dict(self._settings)
 
     def check_ytdlp(self, force: bool = True):
@@ -1662,6 +1921,7 @@ class Api:
                   seconds=round(pipeline.timings["separate"], 1), total=round(seconds, 1),
                   timings={k: round(v, 1) for k, v in pipeline.timings.items()},
                   gpu_memory_mb=round(pipeline.gpu_memory_mb), device=_badge_device(pipeline.run_device))
+        self.emit("models", models=self.models())  # a first run may have installed a model
 
     def _song_view(self, entry: dict) -> dict | None:
         """A history entry as the results screen shows it (with waveforms and playable URLs)."""
@@ -1773,6 +2033,12 @@ def run_window(smoke_test_report: Path | None = None) -> int:
         except Exception as exc:
             api.emit("log", text=f"Drag and drop unavailable: {exc}")
         threading.Thread(target=api.detect_device_quickly, daemon=True).start()
+        api.check_app_update()
+        # Load the chosen model a few seconds after opening (if it's installed),
+        # so the first song starts straight away. Freed again after 10 idle minutes.
+        preload = threading.Timer(4, api.warm_up)
+        preload.daemon = True
+        preload.start()
         if api._settings["ytdlp_auto"]:
             api.check_ytdlp(force=False)  # at most once a day
         else:
@@ -1845,6 +2111,8 @@ def self_test(report_path: Path, model_files: list[str] | None) -> int:
             raise PipelineError("FFmpeg not found")
         log(f"ffmpeg: {shutil.which('ffmpeg')}")
         log(f"yt-dlp: {bundled_ytdlp_version()}")
+        import yt_dlp_ejs  # YouTube challenge scripts, run by Deno: must be bundled
+        log(f"yt-dlp-ejs: {yt_dlp_ejs.version}")
         log(f"device: {detect_device()}")
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             tmp = Path(tmp)

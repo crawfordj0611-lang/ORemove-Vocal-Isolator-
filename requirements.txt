@@ -4,6 +4,8 @@ pywebview>=5.3,<7
 
 # YouTube download (update often: YouTube changes break old versions)
 yt-dlp>=2026.10.26
+# YouTube's JavaScript challenges (run with Deno, which the app downloads on first use)
+yt-dlp-ejs>=0.8.0
 
 # UVR5 stem separation. Pulls in PyTorch, librosa, onnx, etc.
 # [cpu] installs onnxruntime (CPU). For an NVIDIA GPU, install a CUDA build
