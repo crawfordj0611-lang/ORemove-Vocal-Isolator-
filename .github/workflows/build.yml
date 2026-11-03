@@ -33,7 +33,7 @@ jobs:
       fail-fast: false
       matrix:
         flavor: ${{ fromJSON(inputs.editions || '["cpu","cuda","mac"]') }}
-    runs-on: ${{ matrix.flavor == 'mac' && 'macos-15' || 'windows-latest' }}  # macos-15: Apple Silicon
+    runs-on: ${{ matrix.flavor == 'mac' && 'macos-14' || 'windows-latest' }}  # macos-14: Apple Silicon
     timeout-minutes: 200
     defaults:
       run:
