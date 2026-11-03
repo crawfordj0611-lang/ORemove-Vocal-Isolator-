@@ -79,6 +79,10 @@ python app.py
 
 ORemove is a Python engine ([`app.py`](app.py)) built on [audio-separator](https://github.com/nomadkaraoke/python-audio-separator) and [yt-dlp](https://github.com/yt-dlp/yt-dlp), with a web interface ([`ui/`](ui)) in a native window via [pywebview](https://pywebview.flowrl.com). The [build workflow](.github/workflows/build.yml) packages and tests all three editions on GitHub Actions.
 
+## Feedback
+
+Like ORemove, or have an idea to make it better? Message me on Instagram: **[@newmoney_uk](https://www.instagram.com/newmoney_uk/)**.
+
 ## License
 
 ORemove is licensed under [PolyForm Shield 1.0.0](LICENSE), with an added permission to share it for free:
