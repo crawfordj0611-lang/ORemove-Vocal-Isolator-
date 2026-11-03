@@ -220,14 +220,29 @@ begin
   Result := EnsureParts(not WizardSilent);
 end;
 
-procedure CurStepChanged(CurStep: TSetupStep);
 var
-  I: Integer;
+  Installed: Boolean;
+
+procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  { The downloaded parts aren't needed once installed: free the space. }
   if CurStep = ssDone then
-    for I := 0 to DownloadedParts.Count - 1 do
-      DeleteFile(DownloadedParts[I]);
+    Installed := True;
+end;
+
+{ The downloaded parts aren't needed once installed: free the space. Setup
+  keeps them open until it exits, so if they can't be deleted yet, a hidden
+  command deletes them a few seconds later. (After a failed or cancelled
+  install they're kept, so running setup again doesn't download them again.) }
+procedure DeinitializeSetup();
+var
+  I, Code: Integer;
+begin
+  if not Installed or (DownloadedParts = nil) then
+    Exit;
+  for I := 0 to DownloadedParts.Count - 1 do
+    if not DeleteFile(DownloadedParts[I]) then
+      Exec(ExpandConstant('{cmd}'), '/C ping -n 6 127.0.0.1 >NUL & del /F /Q "' + DownloadedParts[I] + '"',
+        '', SW_HIDE, ewNoWait, Code);
 end;
 
 { True if the Microsoft Edge WebView2 Runtime is installed, machine-wide or

@@ -33,7 +33,7 @@ jobs:
       fail-fast: false
       matrix:
         flavor: ${{ fromJSON(inputs.editions || '["cpu","cuda","mac"]') }}
-    runs-on: ${{ matrix.flavor == 'mac' && 'macos-latest' || 'windows-latest' }}
+    runs-on: ${{ matrix.flavor == 'mac' && 'macos-15' || 'windows-latest' }}  # macos-15: Apple Silicon
     timeout-minutes: 200
     defaults:
       run:
@@ -256,7 +256,8 @@ jobs:
             $code = Run-Setup "$alone\ORemove-NVIDIA-GPU-Setup.exe" ($quiet + "/SKIPGPUCHECK=1", "/PARTSURL=http://127.0.0.1:8123/") 30
           } finally { Stop-Process $server -Force }
           if ($code -ne 0 -or -not (Test-Path "$dir\$env:APP_NAME.exe")) { throw "Install with downloaded parts failed (exit code $code)" }
-          if (Test-Path "$alone\ORemove-NVIDIA-GPU-Setup-1.bin") { throw "Setup didn't remove the parts it downloaded" }
+          Start-Sleep 15  # the parts are deleted just after setup exits
+          if (Test-Path "$alone\ORemove-NVIDIA-GPU-Setup-*.bin") { throw "Setup didn't remove the parts it downloaded" }
           Write-Host "Installed OK (setup downloaded its parts)"
           Run-Setup "$dir\unins000.exe" @("/VERYSILENT", "/SUPPRESSMSGBOXES") 10 | Out-Null
 
