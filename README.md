@@ -30,11 +30,23 @@
 
 | Edition | For | File |
 |---|---|---|
-| **Windows · NVIDIA GPU** | PCs with an NVIDIA GeForce GTX 900-series or newer | `ORemove-NVIDIA-GPU-Setup` (`.exe` + every `.bin` part) |
+| **Windows · NVIDIA GPU** | PCs with an NVIDIA GeForce GTX 900-series or newer | 3 files: `ORemove-NVIDIA-GPU-Setup.exe`, `-1.bin` and `-2.bin` (see below) |
 | **Windows · CPU** | Any 64-bit Windows PC, including AMD and Intel graphics | `ORemove-Windows-CPU.zip` |
 | **macOS** | Apple Silicon (M1 or newer), macOS 13+ | `ORemove-macOS-AppleSilicon.dmg` |
 
 On Windows, GPU acceleration works with **NVIDIA graphics cards only**; on other PCs, use the CPU edition (much slower, but works everywhere).
+
+> [!IMPORTANT]
+> **NVIDIA GPU edition: download all 3 files into the same folder.** The installer is split into parts because GitHub limits files to 2 GB:
+>
+> ```
+> 📁 Downloads
+>    ├── ORemove-NVIDIA-GPU-Setup.exe
+>    ├── ORemove-NVIDIA-GPU-Setup-1.bin
+>    └── ORemove-NVIDIA-GPU-Setup-2.bin
+> ```
+>
+> Wait until both `.bin` files have finished downloading, then run `ORemove-NVIDIA-GPU-Setup.exe`. Don't rename the files: if your browser saved a copy as `... (1).bin`, delete the old copies and download again. A missing, renamed or half-downloaded part causes a "source file is corrupted" error.
 
 > [!CAUTION]
 > **ORemove is free.** If anyone charged you for it, you've been scammed. Only download it from the [official releases page](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases).
