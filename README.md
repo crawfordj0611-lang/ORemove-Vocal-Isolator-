@@ -9,7 +9,7 @@
   <a href="https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/crawfordj0611-lang/ORemove-Vocal-Isolator-?color=22C55E"></a>
   <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4">
   <img alt="macOS Apple Silicon" src="https://img.shields.io/badge/macOS-Apple%20Silicon-000000">
-  <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-22C55E">
+  <img alt="License: PolyForm Shield 1.0.0" src="https://img.shields.io/badge/License-PolyForm%20Shield-22C55E">
 </p>
 
 <p align="center">
@@ -34,11 +34,14 @@
 | **Windows · CPU** | Any 64-bit Windows PC, including AMD and Intel graphics | `ORemove-Windows-CPU.zip` |
 | **macOS** | Apple Silicon (M1 or newer), macOS 13+ | `ORemove-macOS-AppleSilicon.dmg` |
 
-> [!IMPORTANT]
-> On Windows, GPU acceleration works with **NVIDIA graphics cards only**. On other PCs, use the CPU edition, which works everywhere but is much slower.
+On Windows, GPU acceleration works with **NVIDIA graphics cards only**; on other PCs, use the CPU edition (much slower, but works everywhere).
 
-> [!NOTE]
-> **YouTube links depend on [yt-dlp](https://github.com/yt-dlp/yt-dlp).** YouTube changes its site often, which can stop YouTube downloads working until yt-dlp releases a fix. Starting with **version 1.5.4**, ORemove installs yt-dlp updates automatically (checked daily; see **Settings → YouTube downloader**), so there can be a short gap of a few days at most. **Versions 1.5.3 and older never update yt-dlp**, so their YouTube downloads will eventually stop working: update to 1.5.4 or newer. Your own audio files are never affected.
+> [!CAUTION]
+> **ORemove is free.** If anyone charged you for it, you've been scammed. Only download it from the [official releases page](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases).
+
+### YouTube links
+
+YouTube downloads use [yt-dlp](https://github.com/yt-dlp/yt-dlp), which needs updating whenever YouTube changes its site. **ORemove 1.5.4 and newer update yt-dlp automatically** (see **Settings → YouTube downloader**). Older versions never do, so their YouTube downloads will eventually stop working: update to the latest release. Your own audio files are never affected.
 
 ## Models
 
@@ -78,6 +81,11 @@ ORemove is a Python engine ([`app.py`](app.py)) built on [audio-separator](https
 
 ## License
 
-[MIT](LICENSE). Built on the work of [Ultimate Vocal Remover](https://github.com/Anjok07/ultimatevocalremovergui) and its model authors, audio-separator, yt-dlp, PyTorch, FFmpeg and pywebview; see [third-party notices](THIRD-PARTY-NOTICES.md).
+ORemove is licensed under [PolyForm Shield 1.0.0](LICENSE), with an added permission to share it for free:
+
+- **You can** use it for anything, including paid music work, change it, and give it away for free (on its own or bundled with other free software).
+- **You can't** sell it (or a changed version), charge for access to it, or bundle it with anything paid.
+
+Separation is powered by [audio-separator](https://github.com/nomadkaraoke/python-audio-separator) and the models of the [Ultimate Vocal Remover](https://github.com/Anjok07/ultimatevocalremovergui) community; these and the other bundled components (yt-dlp, PyTorch, FFmpeg, pywebview) keep their own licenses. See [third-party notices](THIRD-PARTY-NOTICES.md).
 
 Only separate audio you own or have permission to use; downloading from YouTube may be restricted by its Terms of Service. ORemove is not affiliated with YouTube, Google, Apple or the Ultimate Vocal Remover project.

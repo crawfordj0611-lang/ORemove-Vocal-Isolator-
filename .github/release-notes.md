@@ -1,5 +1,9 @@
 **ORemove - AI Powered Vocal Isolator**: clean acapellas and instrumentals from YouTube links and your own audio files.
 
+### What's new in 1.5.5
+- **New license.** ORemove is now licensed under [PolyForm Shield 1.0.0](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/blob/main/LICENSE) with an added permission to share it for free: use it for anything (including paid music work), change it and give it away free (bundling with free software included), but never charge for it. **ORemove is free; if anyone charged you for it, you've been scammed.**
+- Otherwise the same as 1.5.4.
+
 ### What's new in 1.5.4
 - **YouTube links keep working on their own.** When YouTube changes its site, the fix arrives as a yt-dlp update; ORemove now checks for one daily and installs it automatically (a ~3 MB download, verified before use). If a YouTube download fails, it checks right away and retries with the update. See the version, check now, or turn it off under **Settings → YouTube downloader**.
 - **Please update if you use YouTube links.** 1.5.4 is the first version that updates yt-dlp; 1.5.3 and older never do, so their YouTube downloads will eventually stop working.

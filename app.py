@@ -62,7 +62,7 @@ from urllib.parse import unquote
 
 APP_TITLE = "ORemove"
 APP_TAGLINE = "AI Powered Vocal Isolator"
-APP_VERSION = "1.5.4"
+APP_VERSION = "1.5.5"
 
 # True when running as the packaged app (built with PyInstaller).
 FROZEN = getattr(sys, "frozen", False)

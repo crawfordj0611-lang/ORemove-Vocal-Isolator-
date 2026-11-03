@@ -1,6 +1,7 @@
 # Third-party notices
 
-ORemove's own code is MIT-licensed (see [LICENSE](LICENSE)). The Windows
+ORemove's own code is licensed under the PolyForm Shield License 1.0.0 (see
+[LICENSE](LICENSE)); that license doesn't apply to these components. The Windows
 downloads also bundle the open-source components below, each under its own
 license. The full license text of every bundled Python package is included in
 the download as `THIRD-PARTY-LICENSES.txt`, generated when the app is built.

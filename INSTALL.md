@@ -2,6 +2,8 @@
 
 This guide walks you through installing **ORemove - AI Powered Vocal Isolator** on Windows, step by step. It takes about 10 minutes, most of it downloading.
 
+> **ORemove is free.** If anyone charged you for it, you've been scammed: only download it from the [official releases page](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases).
+
 **Contents**
 
 1. [Choose your edition](#1-choose-your-edition)
