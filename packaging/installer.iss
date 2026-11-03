@@ -195,7 +195,7 @@ end;
 procedure InitializeWizard();
 begin
   DownloadPage := CreateDownloadPage(SetupMessage(msgWizardPreparing),
-    'Downloading ORemove (about 2.8 GB). This only happens once per version.', nil);
+    'Downloading ORemove (about 1.9 GB). This only happens once per version.', nil);
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;

@@ -17,3 +17,7 @@ build/
 *.spec
 packaging/MicrosoftEdgeWebview2Setup.exe
 packaging/icon.icns
+logs/
+deno/
+update-check.json
+history.json

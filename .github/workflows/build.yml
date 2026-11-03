@@ -54,13 +54,15 @@ jobs:
           python -m pip install --upgrade pip
           # torchvision (used by onnx2torch to load models) must come from the
           # same index as torch so its compiled operators match.
+          # Exact versions (see packaging/constraints.txt), so builds are repeatable.
+          # (The CUDA 12.6 index's newest PyTorch is 2.14.1.)
           case "${{ matrix.flavor }}" in
-            cuda) pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126 ;;  # GTX 900 to RTX 40 series
-            cpu)  pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu ;;
-            mac)  pip install torch torchvision ;;  # includes Apple GPU (MPS) support
+            cuda) pip install torch==2.14.1 torchvision==0.29.1 --index-url https://download.pytorch.org/whl/cu126 ;;  # GTX 900 to RTX 40 series
+            cpu)  pip install torch==2.15.0 torchvision==0.29.2 --index-url https://download.pytorch.org/whl/cpu ;;
+            mac)  pip install torch==2.15.0 torchvision==0.29.2 ;;  # includes Apple GPU (MPS) support
           esac
-          pip install -r requirements.txt
-          pip install pyinstaller pip-licenses pillow
+          pip install -r requirements.txt -c packaging/constraints.txt
+          pip install pyinstaller pip-licenses pillow -c packaging/constraints.txt
 
       - name: Make the app icon
         run: python packaging/make_icon.py
@@ -100,6 +102,23 @@ jobs:
           export PATH="$PWD/ffmpeg-bin:$PATH"
           python app.py --self-test source-test.txt || { cat source-test.txt; exit 1; }
           cat source-test.txt
+
+      # A real YouTube download through yt-dlp and Deno. Informational only:
+      # YouTube sometimes blocks cloud machines, which isn't ORemove's fault.
+      - name: YouTube check (informational)
+        continue-on-error: true
+        run: |
+          export PATH="$PWD/ffmpeg-bin:$PATH"
+          python - <<'PY'
+          import tempfile, threading
+          from pathlib import Path
+          import app
+          d = Path(tempfile.mkdtemp())
+          p = app.ExtractionPipeline(log=print, progress=lambda v: None, cancel_event=threading.Event())
+          (d / "dl").mkdir()
+          print("title:", p.download_youtube("https://www.youtube.com/watch?v=jNQXAC9IVRw", d / "dl", d / "x.wav"))
+          print("audio:", (d / "x.wav").stat().st_size, "bytes")
+          PY
 
       - name: Build with PyInstaller
         run: |

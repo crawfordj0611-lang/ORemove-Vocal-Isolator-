@@ -37,7 +37,7 @@
 On Windows, GPU acceleration works with **NVIDIA graphics cards only**. On other PCs, use the CPU edition: it works everywhere, but is much slower.
 
 > [!NOTE]
-> **NVIDIA GPU edition: just download `ORemove-NVIDIA-GPU-Setup.exe` and run it.** Setup downloads the rest of ORemove (about 2.8 GB) and checks it as it installs. The `.bin` and `parts.txt` files on the release page are what it downloads, so you can ignore them.
+> **NVIDIA GPU edition: just download `ORemove-NVIDIA-GPU-Setup.exe` and run it.** Setup downloads the rest of ORemove (about 1.9 GB) and checks it as it installs. The `.bin` and `parts.txt` files on the release page are what it downloads, so you can ignore them.
 
 > [!CAUTION]
 > **ORemove is free.** If anyone charged you for it, you've been scammed. Only download it from the [official releases page](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases).

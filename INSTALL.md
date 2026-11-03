@@ -30,7 +30,7 @@ ORemove comes in two editions. Pick the one that matches your graphics card.
 |---|---|---|
 | **For** | PCs with an **NVIDIA** graphics card (GeForce GTX 900 series or newer) | **Any** Windows PC, including **AMD** and **Intel** graphics |
 | **Speed** | Fast: a song takes seconds to about a minute | Slow: a song takes several minutes, up to 30+ with the best models |
-| **Download** | About 2.8 GB (an installer in 3 parts) | About 470 MB (one zip file) |
+| **Download** | About 1.9 GB (a small installer that downloads the rest) | About 470 MB (one zip file) |
 | **Installs** | Yes, with Start Menu shortcut and uninstaller | No, runs from a folder |
 
 > [!IMPORTANT]
@@ -57,7 +57,7 @@ If any GPU entry says **NVIDIA**, use the **NVIDIA GPU edition**. Otherwise, use
 
 ### Step 1: Download the installer
 
-Download **[ORemove-NVIDIA-GPU-Setup.exe](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest/download/ORemove-NVIDIA-GPU-Setup.exe)** (2.5 MB). That's the only file you need: during setup it downloads the rest of ORemove (about 2.8 GB) and checks it. The link always points to the newest version.
+Download **[ORemove-NVIDIA-GPU-Setup.exe](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest/download/ORemove-NVIDIA-GPU-Setup.exe)** (2.5 MB). That's the only file you need: during setup it downloads the rest of ORemove (about 1.9 GB) and checks it. The link always points to the newest version.
 
 > If your browser says the file "isn't commonly downloaded", open the download menu, choose **Keep**, then **Keep anyway**. This appears because ORemove isn't code-signed.
 
@@ -75,7 +75,7 @@ The release page also lists `.bin` files and a `parts.txt` file: those are what 
 2. **License Agreement:** read it, select **I accept the agreement**, and click **Next**.
 3. **Destination Location:** keep the default folder and click **Next**. No administrator rights are needed; ORemove installs for your user account only.
 4. **Additional Tasks:** tick **Create a desktop shortcut** if you want one, then click **Next**.
-5. **Ready to Install:** click **Install**. Setup first downloads the rest of ORemove (about 2.8 GB; a few minutes on a fast connection), then installs it.
+5. **Ready to Install:** click **Install**. Setup first downloads the rest of ORemove (about 1.9 GB; a few minutes on a fast connection), then installs it.
 6. **Finish:** leave **Launch ORemove** ticked and click **Finish**.
 
 Setup removes the parts it downloaded once it's finished. You can delete `ORemove-NVIDIA-GPU-Setup.exe` too.

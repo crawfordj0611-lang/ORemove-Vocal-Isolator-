@@ -62,7 +62,7 @@ from urllib.parse import unquote
 
 APP_TITLE = "ORemove"
 APP_TAGLINE = "AI Powered Vocal Isolator"
-APP_VERSION = "1.5.6"
+APP_VERSION = "1.5.7"
 
 # True when running as the packaged app (built with PyInstaller).
 FROZEN = getattr(sys, "frozen", False)
@@ -565,6 +565,31 @@ def check_app_update(force: bool = False) -> dict | None:
     return None
 
 
+# The activity log is also saved to a file, for sending with a problem report.
+LOG_FILE = DATA_DIR / "logs" / "oremove.log"
+_log_lock = threading.Lock()
+
+
+def write_log_file(text: str):
+    try:
+        with _log_lock:
+            LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            if LOG_FILE.exists() and LOG_FILE.stat().st_size > 2_000_000:
+                os.replace(LOG_FILE, LOG_FILE.with_suffix(".old.log"))  # keep one previous file
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S}  {text}\n")
+    except Exception:
+        pass  # logging must never break the app
+
+
+def _log_uncaught(kind, exc_type, exc, tb):
+    write_log_file(f"CRASH ({kind}):\n" + "".join(traceback.format_exception(exc_type, exc, tb)))
+
+
+sys.excepthook = lambda t, e, tb: (_log_uncaught("main", t, e, tb), sys.__excepthook__(t, e, tb))
+threading.excepthook = lambda a: _log_uncaught(f"thread {a.thread.name if a.thread else '?'}", a.exc_type, a.exc_value, a.exc_traceback)
+
+
 def model_installed(filename: str) -> bool:
     """True once a model is on this computer (downloaded, or bundled with the app)."""
     return (MODEL_DIR / filename).exists() or (BUNDLE_DIR / "models" / filename).exists()
@@ -757,6 +782,12 @@ def _set_progress_sink(sink):
 # after a GPU out-of-memory error and stays on for the rest of the session.
 _cache = {"key": None, "separator": None, "safe": False, "device": ""}
 
+# How the Roformer models run on this computer's GPU: 16-bit or full precision,
+# and whether PyTorch compiles the model's repeated blocks (torch.compile,
+# Apple GPUs). Which is fastest depends on the chip, so the speed test in
+# Settings measures them and saves the winner; until then the defaults are used.
+_engine_profile = {"fp16": None, "compile": None}  # None = default
+
 
 def _describe_device(separator) -> str:
     """Where a loaded model actually runs, in words: 'RTX 4070 SUPER', 'the Apple GPU', 'the CPU'."""
@@ -814,6 +845,9 @@ def _release_separator():
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        mps = getattr(torch, "mps", None)
+        if mps and getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            mps.empty_cache()
     except Exception:
         pass
 
@@ -1153,7 +1187,10 @@ class ExtractionPipeline:
         mps = bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
         safe = safe or _cache["safe"]
         gpu_settings = (cuda or force_gpu_settings) and not safe
-        key = (job.model_file, job.output_format, job.faster, safe, gpu_settings)
+        roformer = "roformer" in job.model_file.lower()
+        fp16 = (cuda or mps) and not safe and roformer and _engine_profile["fp16"] is not False
+        compile_blocks = mps and not safe and roformer and bool(_engine_profile["compile"])
+        key = (job.model_file, job.output_format, job.faster, safe, gpu_settings, fp16, compile_blocks)
         if _cache["key"] == key:
             self.run_device = _cache.get("device", "")
             self._engine_cb(self.run_device)
@@ -1173,11 +1210,12 @@ class ExtractionPipeline:
         except Exception:
             pass  # device info is a nicety only
 
-        roformer = "roformer" in job.model_file.lower()
         options = dict(
             # Half precision on GPUs: native float16 for BS-Roformer (verified by
             # audio-separator on NVIDIA and Apple GPUs), autocast for MDX-Net on NVIDIA.
-            use_native_fp16=(cuda or mps) and not safe and roformer,
+            # The speed test may turn either of these choices around (see _engine_profile).
+            use_native_fp16=fp16,
+            use_torch_compile=compile_blocks,
             use_autocast=cuda and not safe and not roformer,
             # A segment size other than the model's own (256) makes audio-separator
             # run the MDX-Net model through PyTorch, which uses the GPU, instead of
@@ -1192,6 +1230,7 @@ class ExtractionPipeline:
         )
         settings = [name for name, on in [
             ("float16", options["use_native_fp16"]),
+            ("compiled (torch.compile)", compile_blocks),
             ("autocast", options["use_autocast"]),
             ("MDX-Net on PyTorch, batch 4", gpu_settings and not roformer),
             ("2 passes (Faster)", job.faster and roformer),
@@ -1568,11 +1607,18 @@ class Api:
         }
         _ytdlp["auto"] = self._settings["ytdlp_auto"]
         self._installing: str | None = None  # model being installed from the welcome card
+        self._speed_testing = False
+        saved = settings.get("engine_profile") or {}
+        _engine_profile.update(fp16=saved.get("fp16"), compile=saved.get("compile"))
 
     # Events -----------------------------------------------------------------
 
     def emit(self, event_type: str, **data):
         self._events.put({"type": event_type, **data})
+        if event_type == "log":
+            write_log_file(str(data.get("text", "")))
+        elif event_type == "error":
+            write_log_file("ERROR: " + str(data.get("message", "")))
 
     def wait_events(self, timeout: float = 20.0) -> list[dict]:
         """Wait until there's at least one event (or the timeout), then return them all."""
@@ -1701,6 +1747,8 @@ class Api:
             "platform": "win" if sys.platform.startswith("win") else "mac" if MACOS else "other",
             "welcome": not settings.get("welcomed"),
             "installing": self._installing,
+            "engine_profile": settings.get("engine_profile"),
+            "log_file": str(LOG_FILE),
         }
 
     # First run, models and updates ---------------------------------------------
@@ -1751,6 +1799,94 @@ class Api:
                 self.emit("log", text=f"ORemove {update['version']} is available.")
 
         threading.Thread(target=check, daemon=True).start()
+
+    def speed_test(self) -> dict:
+        """
+        Find the fastest way to run the Roformer models on this computer's GPU:
+        separate a short test clip with each candidate setting (twice, timing
+        the second run so one-off start-up costs don't count) and keep the
+        fastest. Takes a few minutes.
+        """
+        if self._speed_testing or self._installing or (self._worker and self._worker.is_alive()):
+            return {"ok": False, "error": "Busy, try again when the current job has finished."}
+        model = next((m.filename for m in MODELS if m.filename == self._settings["model"] and "roformer" in m.filename.lower()
+                      and model_installed(m.filename)), None) \
+            or next((m.filename for m in MODELS if "roformer" in m.filename.lower() and model_installed(m.filename)), None)
+        if not model:
+            return {"ok": False, "error": "Install a Roformer model first (separate a song with one, or use Install now)."}
+        self._speed_testing = True
+
+        def run():
+            log = lambda text: self.emit("log", text=text)
+            saved_profile = dict(_engine_profile)
+            results = []
+            try:
+                import torch
+                cuda = torch.cuda.is_available()
+                mps = bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
+                if mps:
+                    candidates = [(True, False), (False, False), (True, True), (False, True)]
+                elif cuda:
+                    candidates = [(True, False), (False, False)]
+                else:
+                    self.emit("speedtest", done=True, summary="This computer runs ORemove on the CPU: there's nothing to tune.")
+                    return
+                with tempfile.TemporaryDirectory(prefix="oremove_speed_") as tmp:
+                    clip = Path(tmp) / "clip.wav"
+                    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "anoisesrc=d=20:c=pink:a=0.3",
+                                    "-f", "lavfi", "-i", "sine=f=220:d=20", "-filter_complex", "amix=inputs=2",
+                                    "-ac", "2", "-ar", "44100", str(clip)], check=True, creationflags=NO_WINDOW)
+                    job = Job(sources=[], model_file=model, output_format="WAV", output_dir=Path(tmp), faster=True)
+                    label = lambda fp16, comp: ("16-bit" if fp16 else "full precision") + (", compiled" if comp else "")
+                    for n, (fp16, comp) in enumerate(candidates, 1):
+                        name = label(fp16, comp)
+                        self.emit("speedtest", step=n, total=len(candidates), status=f"Testing {name} ({n} of {len(candidates)})…")
+                        log(f"Speed test {n}/{len(candidates)}: {name}")
+                        _engine_profile.update(fp16=fp16, compile=comp)
+                        _release_separator()
+                        try:
+                            pipeline = ExtractionPipeline(log=lambda _t: None, progress=lambda _v: None)
+                            seconds = None
+                            for attempt in (1, 2):
+                                out = Path(tmp) / f"out{n}_{attempt}"
+                                out.mkdir()
+                                started = time.monotonic()
+                                pipeline.separate(clip, job, out)
+                                seconds = time.monotonic() - started
+                            results.append({"setting": name, "fp16": fp16, "compile": comp, "seconds": round(seconds, 1)})
+                            log(f"  {name}: {seconds:.1f}s for a 20-second clip")
+                        except Exception as exc:
+                            log(f"  {name}: didn't work ({exc})")
+                    _release_separator()
+                if not results:
+                    raise RuntimeError("no setting worked")
+                best = min(results, key=lambda r: r["seconds"])
+                default = next((r for r in results if r["fp16"] and not r["compile"]), None)
+                _engine_profile.update(fp16=best["fp16"], compile=best["compile"])
+                save_settings({**load_settings(), **self._settings,
+                               "engine_profile": {"fp16": best["fp16"], "compile": best["compile"], "model": model,
+                                                  "results": results, "when": datetime.now().isoformat(timespec="minutes")}})
+                gain = f", {default['seconds'] / best['seconds']:.1f}× faster than the default" \
+                    if default and best is not default and best["seconds"] > 0 else ""
+                summary = f"Fastest here: {best['setting']}{gain}. ORemove now uses it."
+                log("Speed test done. " + summary)
+                self.emit("speedtest", done=True, summary=summary, results=results)
+            except Exception as exc:
+                _engine_profile.update(saved_profile)
+                log(f"Speed test failed: {exc}")
+                self.emit("speedtest", done=True, summary=f"The speed test didn't finish: {exc}")
+            finally:
+                self._speed_testing = False
+
+        threading.Thread(target=run, daemon=True).start()
+        return {"ok": True}
+
+    def open_logs(self):
+        try:
+            LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            open_path(LOG_FILE.parent)
+        except Exception as exc:
+            self.emit("log", text=f"Could not open the log folder: {exc}")
 
     def dismiss_update(self, version: str):
         save_settings({**load_settings(), **self._settings, "skip_update": str(version)})
@@ -1859,6 +1995,8 @@ class Api:
     def start(self, sources: list[str]) -> dict:
         if self._worker and self._worker.is_alive():
             return {"ok": False, "error": "Already working on something."}
+        if self._speed_testing:
+            return {"ok": False, "error": "The speed test is running; it takes a few minutes."}
         sources = [s.strip().strip('"').strip("'") for s in (sources or []) if s and s.strip()]
         if not sources:
             return {"ok": False, "error": "Paste a YouTube link, or browse for audio files."}

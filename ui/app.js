@@ -14,6 +14,7 @@ let running = false;
 let startedAt = 0, tickTimer = null;
 let separating = false;      // true while the model is separating (not downloading or loading)
 let rateStart = null;        // {t, v}: first progress sample of the current stage, for the time-left estimate
+let sepStarted = 0;          // when the current separating stage began
 let etaText = '';
 let songs = [], songIndex = 0;
 let abKind = 'Acapella';
@@ -32,6 +33,11 @@ whenApiReady(async () => {
   renderSettings();
   $('ytdlpVersion').textContent = `yt-dlp ${state.ytdlp}`;
   if (state.welcome) showWelcome();
+  const prof = state.engine_profile;
+  if (prof && prof.results) {
+    const best = prof.results.find(r => r.fp16 === prof.fp16 && r.compile === prof.compile);
+    if (best) { $('speedStatus').textContent = `Using the fastest setting found: ${best.setting}`; $('speedRun').textContent = 'Run again'; }
+  }
   if (!state.ffmpeg) showStartError('FFmpeg is missing, so audio can\'t be read or written. Reinstall ORemove.');
   listenForEvents();
   api.ready();
@@ -132,6 +138,22 @@ $('changeDir').onclick = async () => {
 $('openOut').onclick = () => api.open_output();
 $('ytdlpCheck').onclick = () => api.check_ytdlp();
 $('ytdlpSwitch').onclick = () => saveSettings({ ytdlp_auto: !state.settings.ytdlp_auto });
+// ---------- speed test ----------
+$('speedRun').onclick = async () => {
+  if (running) return;
+  const r = await api.speed_test();
+  if (!r.ok) { $('speedStatus').textContent = r.error; return; }
+  $('speedRun').disabled = true; $('speedRun').textContent = 'Testing…';
+  $('speedStatus').textContent = 'Starting the speed test…';
+};
+function onSpeedTest(ev) {
+  if (ev.status) $('speedStatus').textContent = ev.status;
+  if (ev.done) {
+    $('speedStatus').textContent = ev.summary;
+    $('speedRun').disabled = false; $('speedRun').textContent = 'Run again';
+  }
+}
+$('openLogs').onclick = () => api.open_logs();
 function setYtdlp(ev) {
   $('ytdlpVersion').textContent = `yt-dlp ${ev.version}`;
   $('ytdlpStatus').textContent = ev.status;
@@ -245,7 +267,7 @@ function resetProcessing(sources) {
   setStage(null);
   $('cancel').disabled = false; $('cancel').textContent = 'Stop';
   startedAt = Date.now();
-  separating = false; rateStart = null; etaText = '';
+  separating = false; rateStart = null; sepStarted = 0; etaText = '';
   clearInterval(tickTimer);
   tickTimer = setInterval(() => {
     $('elapsed').textContent = fmt((Date.now() - startedAt) / 1000) + ' elapsed' + (etaText ? ' · ' + etaText : '');
@@ -274,7 +296,10 @@ $('cancel').onclick = () => {
 function updateEta(v) {
   if (v === null || !separating) return;
   const now = Date.now();
-  if (!rateStart) { rateStart = { t: now, v }; return; }
+  // The first chunks are slower (the GPU is warming up), so start measuring
+  // a few seconds in, or the estimate starts out far too long.
+  if (!sepStarted) { sepStarted = now; return; }
+  if (!rateStart) { if (now - sepStarted >= 6000) rateStart = { t: now, v }; return; }
   const dv = v - rateStart.v, dt = (now - rateStart.t) / 1000;
   if (dv < 0.01 || dt < 3) return;  // wait for a steady rate
   const left = (0.97 - v) * dt / dv;
@@ -309,12 +334,13 @@ function handle(ev) {
     case 'installed': onInstalled(ev); break;
     case 'install_error': onInstallError(ev); break;
     case 'models': state.models = ev.models; renderSettings(); break;
+    case 'speedtest': onSpeedTest(ev); break;
     case 'dropped': if (!running && ev.paths.length) { selectedFiles = []; input.value = ''; start(ev.paths); } break;
     case 'title': $('trackTitle').textContent = ev.text; break;
     case 'stage': {
       // A new "Separating stems" step (or leaving it) restarts the time-left estimate.
       const now = ev.detail.includes('Separating stems');
-      if (now || now !== separating) { rateStart = null; etaText = ''; }
+      if (now || now !== separating) { rateStart = null; sepStarted = 0; etaText = ''; }
       separating = now;
       setStage(ev.name); $('stepText').textContent = ev.detail + (ev.detail.endsWith(')') ? '' : '…');
       break;
