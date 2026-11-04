@@ -16,6 +16,8 @@ A stability and speed release; no new features.
 - Frees GPU memory properly on Macs between songs.
 - Every library is now locked to a tested version, so updates can't break ORemove unexpectedly.
 
+### What's new in 1.5.6
+
 - **A cleaner, darker design.** Model, quality and format sit in one row under the drop area; the model menu shows which models are **Installed**; Settings is reorganised to fit without scrolling.
 - **One-file NVIDIA install.** Download just `ORemove-NVIDIA-GPU-Setup.exe`: it downloads and checks the rest itself.
 - **More reliable YouTube links.** ORemove sets up Deno, the JavaScript runtime YouTube now requires (a one-time 40 MB download on your first link), alongside the automatic yt-dlp updates.
