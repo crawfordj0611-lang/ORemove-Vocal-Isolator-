@@ -25,6 +25,10 @@
 - **BPM and key.** Every song is analysed from its instrumental: tempo from an AI beat tracker, key with its Camelot code, both with a confidence check.
 - **Lossless and private.** WAV or 320 kbps MP3 output; everything runs on your computer.
 
+## Responsible use
+
+**Only separate audio you own, have permission to use, or are otherwise legally allowed to use** (for example, your own recordings or properly licensed tracks). Releasing or selling stems from someone else's music usually needs the rights holder's permission, and downloading from YouTube may break YouTube's Terms of Service. You're responsible for how you use ORemove.
+
 ## Download
 
 **[Get the latest release](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases/latest)**, then follow the **[installation guide](INSTALL.md)**.
@@ -96,4 +100,4 @@ ORemove is licensed under [PolyForm Shield 1.0.0](LICENSE), with an added permis
 
 Separation is powered by [audio-separator](https://github.com/nomadkaraoke/python-audio-separator) and the models of the [Ultimate Vocal Remover](https://github.com/Anjok07/ultimatevocalremovergui) community; these and the other bundled components (yt-dlp, PyTorch, FFmpeg, pywebview) keep their own licenses. See [third-party notices](THIRD-PARTY-NOTICES.md).
 
-Only separate audio you own or have permission to use; downloading from YouTube may be restricted by its Terms of Service. ORemove is not affiliated with YouTube, Google, Apple or the Ultimate Vocal Remover project.
+ORemove is not affiliated with YouTube, Google, Apple or the Ultimate Vocal Remover project.

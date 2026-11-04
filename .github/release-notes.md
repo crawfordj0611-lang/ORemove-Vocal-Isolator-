@@ -44,3 +44,5 @@ Download `ORemove-macOS-AppleSilicon.dmg`, open it and drag ORemove into Applica
 FFmpeg and the MDX-Net model are included; the Roformer models download once, on first use.
 Step-by-step instructions: [Installation guide](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/blob/main/INSTALL.md).
 Windows SmartScreen may warn because the app isn't code-signed: click **More info**, then **Run anyway**.
+
+**Use ORemove responsibly:** only separate audio you own, have permission to use, or are otherwise legally allowed to use. Releasing or selling stems from someone else's music usually needs the rights holder's permission, and downloading from YouTube may break YouTube's Terms of Service.
