@@ -78,6 +78,8 @@ function renderSettings() {
   setSeg('formatSeg', s.format, v => saveSettings({ format: v }));
   $('outDir').textContent = s.output_dir;
   $('outDir').title = s.output_dir;
+  $('analyseSwitch').classList.toggle('on', s.analyse !== false);
+  $('analyseSwitch').setAttribute('aria-checked', String(s.analyse !== false));
   const sw = $('ytdlpSwitch');
   sw.classList.toggle('on', !!s.ytdlp_auto);
   sw.setAttribute('aria-checked', String(!!s.ytdlp_auto));
@@ -138,6 +140,7 @@ $('changeDir').onclick = async () => {
 $('openOut').onclick = () => api.open_output();
 $('ytdlpCheck').onclick = () => api.check_ytdlp();
 $('ytdlpSwitch').onclick = () => saveSettings({ ytdlp_auto: !state.settings.ytdlp_auto });
+$('analyseSwitch').onclick = () => saveSettings({ analyse: !state.settings.analyse });
 // ---------- speed test ----------
 $('speedRun').onclick = async () => {
   if (running) return;
@@ -290,7 +293,7 @@ function setStage(name) {
 $('cancel').onclick = () => {
   api.cancel();
   $('cancel').disabled = true;
-  $('cancel').textContent = 'Stopping after the current step…';
+  $('cancel').textContent = 'Stopping…';
 };
 // Time left, from how fast progress is moving in the current stage.
 function updateEta(v) {
@@ -385,7 +388,7 @@ function showResults(list, failures, info) {
   timing.classList.toggle('hidden', !t);
   if (t) {
     const parts = [['getting audio', t.audio], ['first-time model download', t.model_download], ['starting the AI engine', t.engine],
-                   ['loading the model', t.model_load], ['separating', t.separate], ['saving', t.save]]
+                   ['loading the model', t.model_load], ['separating', t.separate], ['saving', t.save], ['BPM and key', t.analyse]]
       .filter(([, v]) => v >= 1).map(([k, v]) => `${k} ${fmt(v)}`);
     timing.textContent = `Total ${fmt(info.total)}: ` + parts.join(' · ') + (info.gpu_memory_mb ? ` · GPU memory ${info.gpu_memory_mb} MB` : '');
   }
@@ -407,15 +410,44 @@ function selectSong(i) {
   $('songTitle').textContent = song.title;
   $('songTitle').title = song.title;
   $('songMeta').textContent = song.meta;
+  renderTags(song.analysis);
   const cards = $('cards');
   cards.innerHTML = '';
-  for (const k of Object.keys(players)) delete players[k];
+  // Release the previous song's players (frees memory and their connections).
+  for (const k of Object.keys(players)) {
+    const a = players[k].audio; a.pause(); a.removeAttribute('src'); a.load(); delete players[k];
+  }
   for (const stem of song.stems) cards.appendChild(makeCard(stem));
   const kinds = song.stems.map(s => s.kind);
   abKind = kinds.includes(abKind) ? abKind : kinds[0];
   $('ab').querySelectorAll('span').forEach(sp => {
     sp.classList.toggle('hidden', !kinds.includes(sp.dataset.kind));
     sp.classList.toggle('on', sp.dataset.kind === abKind);
+  });
+}
+// BPM and key under the song title. Low confidence shows a "?" and the
+// alternative on hover; clicking a tag copies it.
+function renderTags(a) {
+  const box = $('songTags');
+  const tags = [];
+  if (a && a.bpm) {
+    const alt = a.bpm.alternative ? `Could also be read as ${a.bpm.alternative} BPM (half/double time)` : '';
+    tags.push({ main: `${a.bpm.bpm}`, sub: 'BPM', copy: `${a.bpm.bpm} BPM`, unsure: a.bpm.confidence < 0.6,
+                title: [`Tempo: ${a.bpm.bpm} BPM`, alt, `Beat steadiness ${Math.round(a.bpm.confidence * 100)}%`].filter(Boolean).join('\n') });
+  }
+  if (a && a.key) {
+    const k = a.key;
+    tags.push({ main: k.name, sub: k.camelot, copy: `${k.name} (${k.camelot})`, unsure: k.confidence < 0.35,
+                title: `Key: ${k.name} (Camelot ${k.camelot})\nConfidence ${Math.round(k.confidence * 100)}%` +
+                       (k.alternative ? `\nNext most likely: ${k.alternative.name} (${k.alternative.camelot})` : '') });
+  }
+  box.classList.toggle('hidden', !tags.length);
+  box.innerHTML = tags.map((t, i) => `<span class="tag ${t.unsure ? 'unsure' : ''}" data-i="${i}" title="${esc(t.title)}"><b>${esc(t.main)}</b><span>${esc(t.sub)}</span></span>`).join('');
+  box.querySelectorAll('.tag').forEach(el => el.onclick = () => {
+    const t = tags[+el.dataset.i];
+    try { navigator.clipboard.writeText(t.copy); } catch {}
+    const sub = el.querySelector('span'), was = sub.textContent;
+    sub.textContent = 'Copied'; setTimeout(() => sub.textContent = was, 1000);
   });
 }
 function makeCard(stem) {
@@ -439,7 +471,7 @@ function makeCard(stem) {
   card.querySelector('.bars').innerHTML = bars;
   card.querySelector('.prog').innerHTML = bars;
   const audio = new Audio(stem.url);
-  audio.preload = 'metadata';
+  audio.preload = 'auto';  // buffer the whole stem, so seeking and A/B switching are instant
   const prog = card.querySelector('.prog'), cur = card.querySelector('.cur'), btn = card.querySelector('.play');
   const duration = () => audio.duration || stem.duration || 1;
   audio.addEventListener('timeupdate', () => {
@@ -499,7 +531,7 @@ $('newSong').onclick = () => { stopAll(); hideStartError(); show('start'); input
 async function renderHistory() {
   const items = await api.history();
   $('historyList').innerHTML = items.length ? items.map(h => `
-    <div class="hist" data-id="${h.id}"><div class="t">${esc(h.title)}</div><div class="m">${esc(h.when)} · ${esc(h.model)}</div></div>`).join('')
+    <div class="hist" data-id="${h.id}"><div class="t">${esc(h.title)}</div><div class="m">${esc(h.when)} · ${esc(h.model)}${h.tags ? ' · ' + esc(h.tags) : ''}</div></div>`).join('')
     : '<div class="empty">Songs you separate will appear here.</div>';
   document.querySelectorAll('.hist').forEach(el => el.onclick = async () => {
     if (running) return;

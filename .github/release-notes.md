@@ -1,5 +1,13 @@
 **ORemove - AI Powered Vocal Isolator**: clean acapellas and instrumentals from YouTube links and your own audio files.
 
+### What's new in 1.5.8
+- **BPM and key detection.** After separating, ORemove analyses the instrumental (no vocals in the way, so it's more accurate than analysing the full mix) and shows the BPM and key, with its Camelot code, on the results and in History. Click a tag to copy it. When a reading isn't certain it's marked with a "?" and the alternative is shown on hover (half/double time for BPM, the next most likely key). The BPM uses the *Beat This!* AI beat tracker (a one-time 81 MB download on first use). Turn it off under Settings → Output.
+- **Stop works straight away**, even in the middle of separating a song, instead of after the current step.
+- **Progress shows each chunk** as it's separated.
+- **Fixed:** letting go of *Drag to DAW* over ORemove's own window started separating the stem again and broke the A/B player.
+- **Steadier on long songs and smaller GPUs:** if the GPU runs out of memory, ORemove frees it and retries with lower-memory settings (keeping 16-bit, which halves memory use); GPU memory is returned between songs; faster GPU convolution settings on NVIDIA.
+- **Instant playback:** both stems are fully buffered, so seeking and A/B switching don't wait for the disk.
+
 ### What's new in 1.5.7
 A stability and speed release; no new features.
 - **Speed test** (Settings → Performance): finds the fastest way to run the Roformer models on your computer's GPU and uses it from then on. Recommended on Macs, where it can make separation noticeably faster.

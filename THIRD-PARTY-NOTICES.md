@@ -12,6 +12,7 @@ the download as `THIRD-PARTY-LICENSES.txt`, generated when the app is built.
 |---|---|---|
 | [audio-separator](https://github.com/nomadkaraoke/python-audio-separator) | Running the UVR separation models | MIT |
 | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Downloading audio from YouTube | Unlicense (public domain) |
+| [Beat This!](https://github.com/CPJKU/beat_this) (Institute of Computational Perception, JKU Linz) | BPM detection: its model code is included in `oremove_analysis/beat_this/`, and its trained model downloads on first use | MIT |
 | [PyTorch](https://pytorch.org) | AI engine | BSD-3-Clause |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) | Running ONNX models | MIT |
 | [pywebview](https://github.com/r0x0r/pywebview) | Native window for the interface | BSD-3-Clause |

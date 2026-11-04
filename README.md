@@ -22,6 +22,7 @@
 - **Top-rated models.** BS-Roformer and MelBand Roformer for the cleanest results, plus a fast MDX-Net option.
 - **GPU accelerated.** NVIDIA GPUs on Windows and Apple Silicon on Mac, with 16-bit processing for extra speed.
 - **Listen instantly.** Waveforms, in-app playback, A/B switching between vocals and instrumental, and drag-and-drop of stems straight into your DAW (Windows).
+- **BPM and key.** Every song is analysed from its instrumental: tempo from an AI beat tracker, key with its Camelot code, both with a confidence check.
 - **Lossless and private.** WAV or 320 kbps MP3 output; everything runs on your computer.
 
 ## Download

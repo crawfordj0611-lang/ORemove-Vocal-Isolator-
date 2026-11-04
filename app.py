@@ -62,7 +62,7 @@ from urllib.parse import unquote
 
 APP_TITLE = "ORemove"
 APP_TAGLINE = "AI Powered Vocal Isolator"
-APP_VERSION = "1.5.7"
+APP_VERSION = "1.5.8"
 
 # True when running as the packaged app (built with PyInstaller).
 FROZEN = getattr(sys, "frozen", False)
@@ -173,6 +173,7 @@ class Job:
     output_format: str  # "WAV" or "MP3"
     output_dir: Path
     faster: bool = False  # fewer overlapping passes: about 2x faster, slightly lower quality
+    analyse: bool = True  # detect BPM and key after separating
 
 
 YOUTUBE_URL_RE = re.compile(
@@ -711,6 +712,9 @@ class _YtDlpLogger:
 # _progress_sink(kind, done, total) so the app can show real progress.
 
 _progress_sink = None
+# Raises Cancelled once Stop is pressed; checked after every chunk of audio, so
+# Stop takes effect within a second or two instead of after the whole song.
+_progress_cancel = None
 
 
 class _ProgressBar:
@@ -732,6 +736,9 @@ class _ProgressBar:
 
     def update(self, n=1):
         self.n += n
+        check = _progress_cancel
+        if check:
+            check()  # raises Cancelled: stops the separation between chunks
         sink = _progress_sink
         if sink and self.total:
             try:
@@ -836,6 +843,49 @@ def _gpu_memory_peak_mb() -> float | None:
     return None
 
 
+def _run_separator(separator, wav: Path):
+    """Run one separation without autograd bookkeeping (no effect on the result)."""
+    import torch
+    with torch.inference_mode():
+        return separator.separate(str(wav))
+
+
+def _free_gpu_cache():
+    """
+    Return cached GPU memory to the system after a song, keeping the model
+    loaded: between songs the GPU then holds only the model, not the previous
+    song's leftover work buffers.
+    """
+    try:
+        import gc
+        import torch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+    except Exception:
+        pass
+
+
+_tracker = {"instance": None}
+
+
+def _beat_tracker():
+    """The BPM detector, loaded once and kept (it's small: about 80 MB)."""
+    if _tracker["instance"] is None:
+        import oremove_analysis as oa
+        device = "cpu"
+        try:
+            import torch
+            if torch.cuda.is_available():
+                device = "cuda"
+        except Exception:
+            pass
+        _tracker["instance"] = oa.BeatTracker(MODEL_DIR, device)
+    return _tracker["instance"]
+
+
 def _release_separator():
     """Drop the loaded model and free its GPU memory."""
     _cache["key"] = _cache["separator"] = None
@@ -878,7 +928,7 @@ class ExtractionPipeline:
         self.run_device = ""              # what the loaded model runs on, e.g. "RTX 4070 SUPER"
         self.on_model_download = None     # optional (percent, total bytes) callback
         # Seconds spent in each step, for the breakdown on the results screen.
-        self.timings = {"audio": 0.0, "engine": 0.0, "model_download": 0.0, "model_load": 0.0,
+        self.timings = {"analyse": 0.0, "audio": 0.0, "engine": 0.0, "model_download": 0.0, "model_load": 0.0,
                         "separate": 0.0, "save": 0.0}
         self.gpu_memory_mb = 0.0          # peak GPU memory used while separating (proof the GPU worked)
 
@@ -1029,6 +1079,7 @@ class ExtractionPipeline:
             "noprogress": True,
             "retries": 5,
             "fragment_retries": 5,
+            "concurrent_fragment_downloads": 4,  # streams split into fragments download 4 at a time
             "logger": _YtDlpLogger(self.log),
             "progress_hooks": [on_progress],
             **ytdlp_js_options(),
@@ -1111,9 +1162,12 @@ class ExtractionPipeline:
         started = time.monotonic()
         reported = {"fraction": 0.0, "logged": -10}
 
+        device_text = f" on {self.run_device}" if self.run_device else ""
+
         def on_progress(kind, done, total):
             if kind != "separate":
                 return
+            self.stage("separate", f"Separating stems{device_text} · chunk {min(done, total)} of {total}")
             fraction = min(1.0, done / total)
             if fraction < reported["fraction"] + 0.002 and fraction < 1.0:
                 return  # only report visible changes
@@ -1124,26 +1178,41 @@ class ExtractionPipeline:
                 reported["logged"] = pct
                 self.log(f"  separating... {pct}% ({time.monotonic() - started:.0f}s)")
 
+        global _progress_cancel
         _set_progress_sink(on_progress)
+        _progress_cancel = self.check_cancel
         _reset_gpu_memory_peak()
         try:
-            produced = separator.separate(str(wav))
+            produced = _run_separator(separator, wav)
+        except Cancelled:
+            raise
         except Exception as exc:
             if "out of memory" not in str(exc).lower() or _cache["safe"]:
                 raise PipelineError(f"Separation failed: {exc}") from exc
-            # The GPU ran out of memory with the fast settings: retry once with
-            # the conservative ones (no batching, full precision).
-            self.log("GPU ran out of memory; retrying with lower-memory settings...")
+            # The GPU ran out of memory (another app may be using it, or the
+            # song is very long): free everything and retry once with the
+            # lower-memory settings, which keep 16-bit (half the memory of
+            # full precision) but turn off batching and larger GPU chunks.
+            self.log("GPU ran out of memory; freeing memory and retrying with lower-memory settings...")
             _release_separator()
             separator = self._load_separator(job, stems_dir, safe=True)
             reported.update(fraction=0.0, logged=-10)
             _set_progress_sink(on_progress)
             try:
-                produced = separator.separate(str(wav))
+                produced = _run_separator(separator, wav)
+            except Cancelled:
+                raise
             except Exception as exc2:
+                if "out of memory" in str(exc2).lower():
+                    raise PipelineError(
+                        "Your GPU ran out of memory, even with lower-memory settings. Close other apps that "
+                        "use the GPU (games, video editors, browsers with many tabs) and try again, or use "
+                        "MDX-Net Inst HQ 3, which needs much less memory.") from exc2
                 raise PipelineError(f"Separation failed: {exc2}") from exc2
         finally:
             _set_progress_sink(None)
+            _progress_cancel = None
+            _free_gpu_cache()
         elapsed = time.monotonic() - started
         self.timings["separate"] += elapsed
         self.log(f"Separated in {elapsed:.1f}s")
@@ -1187,8 +1256,13 @@ class ExtractionPipeline:
         mps = bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
         safe = safe or _cache["safe"]
         gpu_settings = (cuda or force_gpu_settings) and not safe
+        if cuda:
+            # Pick the fastest convolution algorithms for these (fixed) chunk
+            # shapes; same results, chosen once per shape.
+            torch.backends.cudnn.benchmark = True
         roformer = "roformer" in job.model_file.lower()
-        fp16 = (cuda or mps) and not safe and roformer and _engine_profile["fp16"] is not False
+        # 16-bit stays on in low-memory mode: it halves the model's memory use.
+        fp16 = (cuda or mps) and roformer and _engine_profile["fp16"] is not False
         compile_blocks = mps and not safe and roformer and bool(_engine_profile["compile"])
         key = (job.model_file, job.output_format, job.faster, safe, gpu_settings, fp16, compile_blocks)
         if _cache["key"] == key:
@@ -1392,7 +1466,7 @@ class ExtractionPipeline:
         self.check_cancel()
         stems = self.separate(wav, job, stems_dir)
         try:
-            self.check_cancel()  # separation can't be interrupted; discard its result instead
+            self.check_cancel()
             save_started = time.monotonic()
             saved = self.file_stems(stems, base_name, job.output_dir)
             self.timings["save"] += time.monotonic() - save_started
@@ -1400,7 +1474,58 @@ class ExtractionPipeline:
             # Free disk space as we go; a batch of long WAVs adds up.
             for path in [wav, *stems]:
                 path.unlink(missing_ok=True)
-        return {"title": title, "stems": saved}
+        analysis = self.analyse(saved) if job.analyse else None
+        return {"title": title, "stems": saved, "analysis": analysis}
+
+    # ---- Step 4: BPM and key ------------------------------------------------
+
+    def analyse(self, saved: list[Path]) -> dict | None:
+        """Detect BPM and key from the saved instrumental. Never fails the song."""
+        source = next((p for p in saved if p.parent.name == "instrumentals"), saved[0] if saved else None)
+        if source is None:
+            return None
+        started = time.monotonic()
+        try:
+            import oremove_analysis as oa
+            tracker = _beat_tracker()
+            if not tracker.installed():
+                self.log(f"Downloading the beat tracker (one time only, {oa.CHECKPOINT_MB} MB)...")
+                shown = {"pct": -1}
+
+                def on_progress(done, total):
+                    self.check_cancel()
+                    pct = int(done * 100 / total) if total else 0
+                    if pct != shown["pct"]:
+                        shown["pct"] = pct
+                        self.stage("save", f"Downloading the BPM detector, one time only ({pct}%)")
+
+                try:
+                    tracker.install(lambda url, timeout, cb: _download(url, timeout=timeout, on_progress=cb),
+                                    on_progress)
+                except Cancelled:
+                    raise
+                except Exception as exc:
+                    self.log(f"Couldn't download the beat tracker ({exc}); detecting the key only.")
+                    tracker = None
+            self.stage("save", "Detecting BPM and key")
+            self.progress(None)
+            result = oa.analyse(source, tracker, cancel=self.check_cancel, log=self.log)
+        except Cancelled:
+            raise
+        except Exception as exc:
+            self.log(f"BPM and key detection didn't work: {exc}")
+            return None
+        bpm, key = result.get("bpm"), result.get("key")
+        parts = []
+        if bpm:
+            parts.append(f"{bpm['bpm']} BPM" + (f" (or {bpm['alternative']})" if bpm.get("alternative") else ""))
+        if key:
+            parts.append(f"{key['name']} ({key['camelot']})" + (f", maybe {key['alternative']['name']}"
+                                                                if key["confidence"] < 0.35 else ""))
+        self.log(("Detected: " + ", ".join(parts) if parts else "BPM and key: not detected")
+                 + f" in {time.monotonic() - started:.1f}s")
+        self.timings["analyse"] += time.monotonic() - started
+        return result
 
 
 # --------------------------------------------------------------------------- #
@@ -1604,10 +1729,14 @@ class Api:
             "format": settings.get("format") if settings.get("format") in OUTPUT_FORMATS else OUTPUT_FORMATS[0],
             "output_dir": settings.get("output_dir") or str(DEFAULT_OUTPUT_DIR),
             "ytdlp_auto": settings.get("ytdlp_auto") is not False,
+            "analyse": settings.get("analyse") is not False,
         }
         _ytdlp["auto"] = self._settings["ytdlp_auto"]
         self._installing: str | None = None  # model being installed from the welcome card
         self._speed_testing = False
+        self._dragging_out: set[str] = set()  # a stem being dragged out of the window
+        self._drag_active = False
+        self._drag_ignore_until = 0.0
         saved = settings.get("engine_profile") or {}
         _engine_profile.update(fp16=saved.get("fp16"), compile=saved.get("compile"))
 
@@ -1911,7 +2040,13 @@ class Api:
             def start_drag():
                 form.DoDragDrop(DataObject(DataFormats.FileDrop, Array[String]([str(file)])), DragDropEffects.Copy)
 
-            form.Invoke(Action(start_drag))
+            self._dragging_out = {os.path.normcase(os.path.abspath(str(file)))}
+            self._drag_active = True
+            try:
+                form.Invoke(Action(start_drag))  # returns when the mouse button is released
+            finally:
+                self._drag_active = False
+                self._drag_ignore_until = time.monotonic() + 3  # the drop event can arrive just after
             return True
         except Exception as exc:
             self.emit("log", text=f"Dragging the file out didn't work: {exc}")
@@ -1924,6 +2059,8 @@ class Api:
                 self._settings[key] = value
             elif key == "output_dir" and value:
                 self._settings[key] = str(value)
+            elif key == "analyse" and isinstance(value, bool):
+                self._settings[key] = value
             elif key == "ytdlp_auto" and isinstance(value, bool):
                 self._settings[key] = _ytdlp["auto"] = value
                 if value:
@@ -1987,6 +2124,10 @@ class Api:
     def on_drop(self, paths: list[str]):
         """Files dropped onto the window (see main())."""
         files = [p for p in paths if p and Path(p).is_file()]
+        # A stem dragged out of a results card and let go over ORemove itself
+        # comes back as a drop: ignore it (it used to start separating the stem).
+        if self._dragging_out and (time.monotonic() < self._drag_ignore_until or self._drag_active):
+            files = [p for p in files if os.path.normcase(os.path.abspath(p)) not in self._dragging_out]
         if files:
             self.emit("dropped", paths=files)
 
@@ -2004,7 +2145,7 @@ class Api:
             return {"ok": False, "error": "That isn't a YouTube link or an audio file that exists."}
         s = self._settings
         job = Job(sources=sources, model_file=s["model"], output_format=s["format"],
-                  output_dir=Path(s["output_dir"]), faster=s["quality"] == "Faster")
+                  output_dir=Path(s["output_dir"]), faster=s["quality"] == "Faster", analyse=s["analyse"])
         self._cancel.clear()
         if self._idle_timer:
             self._idle_timer.cancel()
@@ -2016,7 +2157,7 @@ class Api:
 
     def cancel(self):
         self._cancel.set()
-        self.emit("log", text="Stopping after the current step...")
+        self.emit("log", text="Stopping...")
 
     def _run(self, job: Job):
         try:
@@ -2051,7 +2192,8 @@ class Api:
         now = datetime.now()
         entries = [{"id": uuid.uuid4().hex, "title": song["title"], "date": now.isoformat(timespec="seconds"),
                     "model": model.name if model else job.model_file, "format": job.output_format,
-                    "stems": [str(p) for p in song["stems"]]} for song in songs]
+                    "stems": [str(p) for p in song["stems"]], "analysis": song.get("analysis")}
+                   for song in songs]
         add_to_history(entries)
         for failure in failures:
             self.emit("log", text=f"FAILED: {failure}")
@@ -2079,7 +2221,7 @@ class Api:
         meta = " · ".join(filter(None, [
             f"{int(length) // 60}:{int(length) % 60:02d}" if length else "",
             entry.get("model"), entry.get("format"), "saved to " + _short_folder(Path(stems[0]["path"]).parent.parent)]))
-        return {"title": entry["title"], "meta": meta, "stems": stems}
+        return {"title": entry["title"], "meta": meta, "stems": stems, "analysis": entry.get("analysis")}
 
     # History -----------------------------------------------------------------------
 
@@ -2090,7 +2232,11 @@ class Api:
                 when = datetime.fromisoformat(e["date"]).strftime("%d %b %Y, %H:%M")
             except Exception:
                 when = ""
-            items.append({"id": e.get("id"), "title": e.get("title", "?"), "when": when, "model": e.get("model", "")})
+            a = e.get("analysis") or {}
+            tags = " · ".join(filter(None, [f"{a['bpm']['bpm']} BPM" if a.get("bpm") else "",
+                                            a["key"]["name"] if a.get("key") else ""]))
+            items.append({"id": e.get("id"), "title": e.get("title", "?"), "when": when, "model": e.get("model", ""),
+                          "tags": tags})
         return items
 
     def history_item(self, entry_id: str):
@@ -2225,6 +2371,45 @@ def run_window(smoke_test_report: Path | None = None) -> int:
     return 0 if result["ok"] else 1
 
 
+def _self_test_analysis(tmp: Path, log):
+    """BPM and key detection on a generated 120 BPM groove in A minor."""
+    import numpy as np
+    import soundfile as sf
+    import oremove_analysis as oa
+    sr, bpm, secs = 22050, 120, 32
+    t = np.arange(int(0.25 * sr)) / sr
+    kick = 0.9 * np.sin(2 * np.pi * (50 + 120 * np.exp(-t * 30)) * t) * np.exp(-t * 12)
+    y = np.zeros(int((secs + 3) * sr))
+    chords = [(57, 60, 64), (53, 57, 60), (52, 56, 59), (57, 60, 64)]  # Am, F, E, Am
+    for b in range(int(secs * bpm / 60)):
+        start = int(b * 60 / bpm * sr)
+        y[start:start + len(kick)] += kick if b % 2 == 0 else 0.4 * np.random.default_rng(b).standard_normal(len(kick)) * np.exp(-t * 25)
+        if b % 4 == 0:
+            n = int(4 * 60 / bpm * sr)
+            tt = np.arange(n) / sr
+            for note in chords[(b // 4) % 4]:
+                f = 440 * 2 ** ((note - 69) / 12)
+                y[start:start + n] += 0.08 * np.exp(-tt * 0.8) * sum(np.sin(2 * np.pi * f * k * tt) / k for k in (1, 2, 3))
+            f = 440 * 2 ** ((chords[(b // 4) % 4][0] - 81) / 12)
+            y[start:start + n] += 0.25 * np.exp(-tt * 0.8) * np.sin(2 * np.pi * f * tt)
+    clip = tmp / "groove.wav"
+    sf.write(str(clip), np.stack([y, y], 1).astype(np.float32), sr)
+    tracker = _beat_tracker()
+    if not tracker.installed():
+        try:
+            tracker.install(lambda url, timeout, cb: _download(url, timeout=timeout, on_progress=cb))
+        except Exception as exc:
+            log(f"analysis: beat tracker download failed ({exc}); BPM check skipped")
+            tracker = None
+    started = time.monotonic()
+    result = oa.analyse(clip, tracker, log=log)
+    log(f"analysis: {result} in {time.monotonic() - started:.1f}s")
+    if tracker is not None and not (result["bpm"] and abs(float(result["bpm"]["bpm"]) - bpm) <= 1):
+        raise PipelineError(f"BPM detection gave {result['bpm']}, expected {bpm}")
+    if not result["key"]:
+        raise PipelineError("key detection returned nothing")
+
+
 def self_test(report_path: Path, model_files: list[str] | None) -> int:
     """
     Headless check used by the Windows build: FFmpeg is found, and a short
@@ -2279,6 +2464,8 @@ def self_test(report_path: Path, model_files: list[str] | None) -> int:
                 if reuse and not any("Model already loaded" in l for l in lines[first_line:]):
                     raise PipelineError(f"{model_file}: the loaded model was not reused")
                 log(f"ok in {time.monotonic() - started:.1f}s")
+            if not model_files:
+                _self_test_analysis(tmp, log)
         log("SELF-TEST PASSED")
         code = 0
     except Exception as exc:

@@ -31,14 +31,21 @@ jobs:
         run: |
           if [ -n "$DELETE" ] && [ -z "$KEEP" ]; then
             gh release view "$DELETE" > /dev/null || { echo "Release $DELETE not found; nothing deleted."; exit 1; }
-            echo "Deleting release and tag $DELETE"
-            gh release delete "$DELETE" --cleanup-tag --yes
+            if [ "$(gh release view "$DELETE" --json isDraft --jq .isDraft)" = "true" ]; then
+              echo "Deleting draft $DELETE"; gh release delete "$DELETE" --yes
+            else
+              echo "Deleting release and tag $DELETE"; gh release delete "$DELETE" --cleanup-tag --yes
+            fi
           elif [ -n "$KEEP" ] && [ -z "$DELETE" ]; then
             gh release view "$KEEP" > /dev/null || { echo "Release $KEEP not found; nothing deleted."; exit 1; }
-            gh release list --limit 100 --json tagName --jq '.[].tagName' | while read -r tag; do
+            # Drafts have no tag yet, so only published releases get --cleanup-tag.
+            gh release list --limit 100 --json tagName,isDraft --jq '.[] | "\(.tagName) \(.isDraft)"' | while read -r tag draft; do
               if [ "$tag" != "$KEEP" ]; then
-                echo "Deleting release and tag $tag"
-                gh release delete "$tag" --cleanup-tag --yes
+                if [ "$draft" = "true" ]; then
+                  echo "Deleting draft $tag"; gh release delete "$tag" --yes
+                else
+                  echo "Deleting release and tag $tag"; gh release delete "$tag" --cleanup-tag --yes
+                fi
               fi
             done
           else
