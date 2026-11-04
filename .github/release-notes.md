@@ -1,48 +1,44 @@
-**ORemove - AI Powered Vocal Isolator**: clean acapellas and instrumentals from YouTube links and your own audio files.
+**ORemove - AI Powered Vocal Isolator**: clean acapellas and instrumentals from YouTube links and your own audio files. Free, and everything runs on your computer.
 
-### What's new in 1.5.8
-- **BPM and key detection.** After separating, ORemove analyses the instrumental (no vocals in the way, so it's more accurate than analysing the full mix) and shows the BPM and key, with its Camelot code, on the results and in History. Click a tag to copy it. When a reading isn't certain it's marked with a "?" and the alternative is shown on hover (half/double time for BPM, the next most likely key). The BPM uses the *Beat This!* AI beat tracker (a one-time 81 MB download on first use). Turn it off under Settings → Output.
-- **Stop works straight away**, even in the middle of separating a song, instead of after the current step.
-- **Progress shows each chunk** as it's separated.
-- **Fixed:** letting go of *Drag to DAW* over ORemove's own window started separating the stem again and broke the A/B player.
-- **Steadier on long songs and smaller GPUs:** if the GPU runs out of memory, ORemove frees it and retries with lower-memory settings (keeping 16-bit, which halves memory use); GPU memory is returned between songs; faster GPU convolution settings on NVIDIA.
-- **Instant playback:** both stems are fully buffered, so seeking and A/B switching don't wait for the disk.
+## What's new in 1.5.8
+- **BPM and key detection.** Each song's BPM and key (with its Camelot code) are read from the instrumental, so the vocals don't throw them off, and shown on the results and in History. Click a tag to copy it. Uncertain readings are marked "?", with the alternative on hover. The beat tracker is a one-time 81 MB download; turn it off under **Settings → Output**.
+- **Stop works straight away**, even halfway through a song, and progress shows each chunk as it's separated.
+- **Fixed:** releasing *Drag to DAW* over ORemove's own window started separating the stem again and broke the A/B player.
+- **Steadier on long songs and smaller GPUs:** if the GPU runs out of memory, ORemove frees it and tries again with lower-memory settings, and it returns GPU memory between songs.
+- **Instant playback:** stems are fully loaded, so seeking and A/B switching never wait for the disk.
 
-### What's new in 1.5.7
-A stability and speed release; no new features.
-- **Speed test** (Settings → Performance): finds the fastest way to run the Roformer models on your computer's GPU and uses it from then on. Recommended on Macs, where it can make separation noticeably faster.
-- **More accurate time remaining**: the estimate no longer starts out far too long while the GPU warms up.
-- **Log file for problem reports** (Settings → Activity → Open log folder), including details of any crash.
-- Frees GPU memory properly on Macs between songs.
-- Every library is now locked to a tested version, so updates can't break ORemove unexpectedly.
+<details>
+<summary><b>Earlier updates (1.5.6 and 1.5.7)</b></summary>
 
-### What's new in 1.5.6
+**1.5.7**
+- **Speed test** (**Settings → Performance**) finds the fastest way to run the Roformer models on your GPU. Recommended on Macs.
+- More accurate time remaining, a log file for problem reports (**Settings → Activity**), better GPU memory handling on Macs, and every library locked to a tested version.
 
-- **A cleaner, darker design.** Model, quality and format sit in one row under the drop area; the model menu shows which models are **Installed**; Settings is reorganised to fit without scrolling.
-- **One-file NVIDIA install.** Download just `ORemove-NVIDIA-GPU-Setup.exe`: it downloads and checks the rest itself.
-- **More reliable YouTube links.** ORemove sets up Deno, the JavaScript runtime YouTube now requires (a one-time 40 MB download on your first link), alongside the automatic yt-dlp updates.
-- **Update notices.** ORemove tells you when a new version is out.
-- **Drag stems into your DAW** straight from the results cards (Windows).
-- **Faster.** WAV stems are written directly, keeping your file's bit depth (24-bit sources give 24-bit stems), and your chosen model loads in the background a few seconds after opening.
-- **Welcome guide** on first launch, with the option to install the recommended model straight away.
-- **No more console windows** flashing up when separation finishes, and smaller downloads.
-- ORemove is licensed under [PolyForm Shield 1.0.0](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/blob/main/LICENSE) with an added permission to share it for free; never charge for it. **If anyone charged you for ORemove, you've been scammed.**
+**1.5.6**
+- A cleaner, darker design; the model menu shows which models are installed.
+- One-file NVIDIA install, update notices, and a welcome guide on first launch.
+- More reliable YouTube links (Deno is set up automatically alongside yt-dlp updates).
+- Drag stems into your DAW from the results (Windows).
+- Faster WAV output that keeps your file's bit depth, and no more console windows flashing up.
+</details>
 
-> **⚠️ On Windows, GPU acceleration works with NVIDIA graphics cards only.** AMD and Intel GPUs are not supported; use the CPU edition on those PCs.
+## Download
 
-### Windows · NVIDIA GPU edition (NVIDIA graphics cards only)
-**Download only `ORemove-NVIDIA-GPU-Setup.exe` and run it.** Setup downloads the rest of ORemove (about 1.9 GB) and checks every part, then removes the downloaded parts once it's installed. The `.bin` files and `ORemove-NVIDIA-GPU-Setup-parts.txt` below are what it downloads: you don't need to download them yourself.
+| Edition | Download |
+|---|---|
+| **Windows · NVIDIA GPU** (GeForce GTX 900-series or newer) | `ORemove-NVIDIA-GPU-Setup.exe` only |
+| **Windows · CPU** (any PC, including AMD and Intel graphics) | `ORemove-Windows-CPU.zip` |
+| **macOS · Apple Silicon** (M1 or newer, macOS 13+) | `ORemove-macOS-AppleSilicon.dmg` |
 
-Installs for your user only; no admin needed. The installer warns you if it can't find an NVIDIA card, and installs Microsoft's WebView2 component if needed. Needs a GeForce GTX 900-series or newer card and a current driver.
+- **NVIDIA:** run the Setup. It downloads the rest of ORemove (about 1.9 GB), checks every part and deletes the downloaded parts afterwards; the `.bin` and `parts.txt` files below are what it fetches, so you don't need them. No admin rights needed. **GPU acceleration on Windows works with NVIDIA cards only**; use the CPU edition on other PCs (it's much slower).
+- **CPU:** extract the zip and run `ORemove.exe`.
+- **Mac:** open the dmg and drag ORemove into Applications. macOS blocks it the first time because it isn't notarized; the installation guide has the one-time fix.
+- **Windows SmartScreen** may warn because the app isn't code-signed: click **More info**, then **Run anyway**.
 
-### Windows · CPU edition (any PC, including AMD and Intel graphics)
-Download `ORemove-Windows-CPU.zip`, extract it, and run `ORemove.exe` inside. Works everywhere, but much slower.
+FFmpeg and the MDX-Net model are included; Roformer models download once, on first use. Step-by-step help: [installation guide](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/blob/main/INSTALL.md).
 
-### macOS · Apple Silicon
-Download `ORemove-macOS-AppleSilicon.dmg`, open it and drag ORemove into Applications. Needs an M1 or newer Mac with macOS 13 or newer. The first time, macOS blocks it because it isn't notarized: see the installation guide for the one-time fix.
+---
 
-FFmpeg and the MDX-Net model are included; the Roformer models download once, on first use.
-Step-by-step instructions: [Installation guide](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/blob/main/INSTALL.md).
-Windows SmartScreen may warn because the app isn't code-signed: click **More info**, then **Run anyway**.
+**ORemove is free.** It's licensed under [PolyForm Shield 1.0.0](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/blob/main/LICENSE) with permission to share it for free, but never charge for it. If anyone charged you for ORemove, you've been scammed.
 
 **Use ORemove responsibly:** only separate audio you own, have permission to use, or are otherwise legally allowed to use. Releasing or selling stems from someone else's music usually needs the rights holder's permission, and downloading from YouTube may break YouTube's Terms of Service.

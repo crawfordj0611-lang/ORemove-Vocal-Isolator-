@@ -18,16 +18,16 @@
 
 ## Features
 
-- **Drag, drop, done.** Audio files (MP3, WAV, FLAC, M4A and more), video files, or a YouTube link; one song or a whole batch.
+- **Drag, drop, done.** Audio or video files (MP3, WAV, FLAC, M4A and more) or a YouTube link; one song or a whole batch.
 - **Top-rated models.** BS-Roformer and MelBand Roformer for the cleanest results, plus a fast MDX-Net option.
-- **GPU accelerated.** NVIDIA GPUs on Windows and Apple Silicon on Mac, with 16-bit processing for extra speed.
-- **Listen instantly.** Waveforms, in-app playback, A/B switching between vocals and instrumental, and drag-and-drop of stems straight into your DAW (Windows).
-- **BPM and key.** Every song is analysed from its instrumental: tempo from an AI beat tracker, key with its Camelot code, both with a confidence check.
-- **Lossless and private.** WAV or 320 kbps MP3 output; everything runs on your computer.
+- **GPU accelerated.** NVIDIA GPUs on Windows and Apple Silicon on Mac, with a built-in speed test to find the fastest settings.
+- **BPM and key.** Tempo from an AI beat tracker and key with its Camelot code, read from the instrumental for accuracy.
+- **Listen instantly.** Waveforms, in-app playback, A/B switching between vocals and instrumental, and drag stems straight into your DAW (Windows).
+- **Lossless and private.** WAV or 320 kbps MP3; everything runs on your computer.
 
 ## Responsible use
 
-**Only separate audio you own, have permission to use, or are otherwise legally allowed to use** (for example, your own recordings or properly licensed tracks). Releasing or selling stems from someone else's music usually needs the rights holder's permission, and downloading from YouTube may break YouTube's Terms of Service. You're responsible for how you use ORemove.
+**Only separate audio you own, have permission to use, or are otherwise legally allowed to use**, such as your own recordings or properly licensed tracks. Releasing or selling stems from someone else's music usually needs the rights holder's permission, and downloading from YouTube may break YouTube's Terms of Service. You're responsible for how you use ORemove.
 
 ## Download
 
@@ -39,10 +39,8 @@
 | **Windows · CPU** | Any 64-bit Windows PC, including AMD and Intel graphics | `ORemove-Windows-CPU.zip` |
 | **macOS** | Apple Silicon (M1 or newer), macOS 13+ | `ORemove-macOS-AppleSilicon.dmg` |
 
-On Windows, GPU acceleration works with **NVIDIA graphics cards only**. On other PCs, use the CPU edition: it works everywhere, but is much slower.
-
 > [!NOTE]
-> **NVIDIA GPU edition: just download `ORemove-NVIDIA-GPU-Setup.exe` and run it.** Setup downloads the rest of ORemove (about 1.9 GB) and checks it as it installs. The `.bin` and `parts.txt` files on the release page are what it downloads, so you can ignore them.
+> On Windows, GPU acceleration works with **NVIDIA graphics cards only**; on other PCs, use the CPU edition (it works everywhere, but is much slower). For the NVIDIA edition, **download just `ORemove-NVIDIA-GPU-Setup.exe` and run it**: it downloads the rest (about 1.9 GB) itself, so you can ignore the `.bin` and `parts.txt` files on the release page.
 
 > [!CAUTION]
 > **ORemove is free.** If anyone charged you for it, you've been scammed. Only download it from the [official releases page](https://github.com/crawfordj0611-lang/ORemove-Vocal-Isolator-/releases).
@@ -71,7 +69,7 @@ Stems are saved to **Music/ORemove**. ORemove tells you when a new version is av
 
 ## YouTube links
 
-YouTube downloads use [yt-dlp](https://github.com/yt-dlp/yt-dlp), which needs updating whenever YouTube changes its site. ORemove checks for yt-dlp updates daily and installs them automatically (see **Settings → YouTube downloader**), and sets up [Deno](https://deno.com), the JavaScript runtime YouTube now requires, the first time you use a link (a one-time 40 MB download). Your own audio files are never affected.
+YouTube downloads use [yt-dlp](https://github.com/yt-dlp/yt-dlp), which needs updating whenever YouTube changes its site. ORemove installs yt-dlp updates automatically (**Settings → YouTube downloader**) and sets up [Deno](https://deno.com), which YouTube now requires, the first time you paste a link (a one-time 40 MB download). Your own audio files are never affected.
 
 ## Running from source
 
