@@ -89,6 +89,8 @@ ORemove is a Python engine ([`app.py`](app.py)) built on [audio-separator](https
 
 Like ORemove, or have an idea to make it better? Message me on Instagram: **[@newmoney_uk](https://www.instagram.com/newmoney_uk/)**.
 
+**Crashed or something not working?** Email your log file to **[newmoneymadeit@gmail.com](mailto:newmoneymadeit@gmail.com)** with a short note of what you were doing. To find it, open **Settings → Activity → Open log folder** and attach `oremove.log`.
+
 ## License
 
 ORemove is licensed under [PolyForm Shield 1.0.0](LICENSE), with an added permission to share it for free:
