@@ -4,8 +4,14 @@
 - **BPM and key detection.** Each song's BPM and key (with its Camelot code) are read from the instrumental, so the vocals don't throw them off, and shown on the results and in History. Click a tag to copy it. Uncertain readings are marked "?", with the alternative on hover. The beat tracker is a one-time 81 MB download; turn it off under **Settings → Output**.
 - **Stop works straight away**, even halfway through a song, and progress shows each chunk as it's separated.
 - **Fixed:** releasing *Drag to DAW* over ORemove's own window started separating the stem again and broke the A/B player.
-- **Steadier on long songs and smaller GPUs:** if the GPU runs out of memory, ORemove frees it and tries again with lower-memory settings, and it returns GPU memory between songs.
-- **Instant playback:** stems are fully loaded, so seeking and A/B switching never wait for the disk.
+
+**Performance and stability**
+- **Faster on NVIDIA:** ORemove now picks the fastest GPU settings for your card automatically.
+- **Less memory while separating:** separation skips bookkeeping that's only needed for training AI models, so it uses less GPU memory and runs a little faster on every edition.
+- **Steadier on long songs and smaller GPUs:** if the GPU runs out of memory, ORemove frees it and tries again with lower-memory settings (still at 16-bit, which uses half the memory), instead of failing.
+- **GPU memory is returned after every song**, so long batches don't slowly fill it up.
+- **Faster YouTube downloads:** ORemove downloads 4 parts of a song at a time when YouTube splits it up.
+- **Instant playback:** both stems are fully loaded, so seeking and A/B switching never wait for the disk, and the previous song's players are released to free memory.
 
 <details>
 <summary><b>Earlier updates (1.5.6 and 1.5.7)</b></summary>

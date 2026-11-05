@@ -55,7 +55,7 @@
 | **MelBand Roformer Vocals** (becruily) | The fullest acapellas | 871 MB |
 | **MDX-Net Inst HQ 3** | Speed | Included |
 
-Models download once, on first use. **Quality: Faster** roughly halves Roformer processing time for a small quality trade-off.
+Roformer models download once, on first use. **Quality: Faster** roughly halves their processing time for a small quality trade-off.
 
 ## Requirements
 
@@ -65,7 +65,7 @@ Models download once, on first use. **Quality: Faster** roughly halves Roformer 
 | **Memory** | 16 GB | 8 GB minimum, 16 GB recommended | 8 GB minimum, 16 GB recommended |
 | **Disk** | ~6 GB + up to 3 GB of models | ~2 GB + up to 3 GB of models | ~2 GB + up to 3 GB of models |
 
-Stems are saved to **Music/ORemove**. ORemove tells you when a new version is available. For help, see [installation problems](INSTALL.md#9-installation-problems).
+Stems are saved to **Music/ORemove**, and ORemove tells you when a new version is out. Having trouble installing? See [installation problems](INSTALL.md#9-installation-problems).
 
 ## YouTube links
 
@@ -85,11 +85,10 @@ python app.py
 
 ORemove is a Python engine ([`app.py`](app.py)) built on [audio-separator](https://github.com/nomadkaraoke/python-audio-separator) and [yt-dlp](https://github.com/yt-dlp/yt-dlp), with a web interface ([`ui/`](ui)) in a native window via [pywebview](https://pywebview.flowrl.com). The [build workflow](.github/workflows/build.yml) packages and tests all three editions on GitHub Actions.
 
-## Feedback
+## Feedback and crash reports
 
-Like ORemove, or have an idea to make it better? Message me on Instagram: **[@newmoney_uk](https://www.instagram.com/newmoney_uk/)**.
-
-**Crashed or something not working?** Email your log file to **[newmoneymadeit@gmail.com](mailto:newmoneymadeit@gmail.com)** with a short note of what you were doing. To find it, open **Settings → Activity → Open log folder** and attach `oremove.log`.
+- **Ideas or feedback?** Message me on Instagram: **[@newmoney_uk](https://www.instagram.com/newmoney_uk/)**.
+- **Crashed or something not working?** Open **Settings → Activity → Open log folder** and email `oremove.log` to **[newmoneymadeit@gmail.com](mailto:newmoneymadeit@gmail.com)**, with a short note of what you were doing.
 
 ## License
 
