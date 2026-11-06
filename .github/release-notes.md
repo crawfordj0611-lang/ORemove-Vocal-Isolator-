@@ -1,20 +1,23 @@
 **ORemove - AI Powered Vocal Isolator**: clean acapellas and instrumentals from YouTube links and your own audio files. Free, and everything runs on your computer.
 
-## What's new in 1.5.8
-- **BPM and key detection.** Each song's BPM and key (with its Camelot code) are read from the instrumental, so the vocals don't throw them off, and shown on the results and in History. Click a tag to copy it. Uncertain readings are marked "?", with the alternative on hover. The beat tracker is a one-time 81 MB download; turn it off under **Settings → Output**.
-- **Stop works straight away**, even halfway through a song, and progress shows each chunk as it's separated.
-- **Fixed:** releasing *Drag to DAW* over ORemove's own window started separating the stem again and broke the A/B player.
-
-**Performance and stability**
-- **Faster on NVIDIA:** ORemove now picks the fastest GPU settings for your card automatically.
-- **Less memory while separating:** separation skips bookkeeping that's only needed for training AI models, so it uses less GPU memory and runs a little faster on every edition.
-- **Steadier on long songs and smaller GPUs:** if the GPU runs out of memory, ORemove frees it and tries again with lower-memory settings (still at 16-bit, which uses half the memory), instead of failing.
-- **GPU memory is returned after every song**, so long batches don't slowly fill it up.
-- **Faster YouTube downloads:** ORemove downloads 4 parts of a song at a time when YouTube splits it up.
-- **Instant playback:** both stems are fully loaded, so seeking and A/B switching never wait for the disk, and the previous song's players are released to free memory.
+## What's new in 1.5.9
+A speed release: the same features, faster. The stems come out the same (the new engine was checked sample by sample against the old one).
+- **Batches finish sooner.** While one song separates, the next one downloads and the previous one is saved and gets its BPM and key, so the GPU never waits. The model also loads while your first song downloads.
+- **Each song is read once.** Audio goes straight into memory instead of through a temporary WAV file, and stems are written straight into your output folder.
+- **Macs:** on some Macs, PyTorch can't do part of the Roformer models' maths on the Apple GPU, so those steps ran on the CPU, copying audio back and forth for every chunk. ORemove can now do them on the GPU. Run the **speed test** (**Settings → Performance**) once so it picks the fastest option for your Mac; the log file shows which way your Mac uses.
+- **Faster on bigger NVIDIA cards:** cards with 10 GB or more separate two chunks at a time (the speed test also tries four on 12 GB cards), and drop back automatically if memory runs short.
+- **No more pauses between chunks:** the GPU keeps working while the previous chunk's result is added up, instead of stopping to copy it back to the CPU.
+- **Faster CPU edition:** one thread per physical core, and faster handling of very small numbers. The speed test can now tune the CPU edition too.
+- **Models load about 40% faster** the first time after opening ORemove.
 
 <details>
-<summary><b>Earlier updates (1.5.6 and 1.5.7)</b></summary>
+<summary><b>Earlier updates (1.5.6 to 1.5.8)</b></summary>
+
+**1.5.8**
+- **BPM and key detection** from the instrumental, with Camelot codes, on the results and in History (**Settings → Output** to turn off).
+- **Stop works straight away**, and progress shows each chunk.
+- **Fixed:** releasing *Drag to DAW* over ORemove's own window started separating the stem again.
+- Steadier on long songs and smaller GPUs, GPU memory returned after every song, faster YouTube downloads and instant playback.
 
 **1.5.7**
 - **Speed test** (**Settings → Performance**) finds the fastest way to run the Roformer models on your GPU. Recommended on Macs.

@@ -332,9 +332,19 @@ def load_mono(path: Path, sr: int = SAMPLE_RATE) -> np.ndarray:
     return soxr.resample(mono, rate, sr).astype(np.float32) if rate != sr else mono.astype(np.float32)
 
 
-def analyse(path: Path, tracker: BeatTracker | None, cancel=None, log=lambda _t: None) -> dict:
-    """{"bpm": {...} or None, "key": {...} or None} for an audio file."""
-    mono = load_mono(path)
+def analyse(path: Path, tracker: BeatTracker | None, cancel=None, log=lambda _t: None,
+            audio: np.ndarray | None = None, audio_rate: int = 44100) -> dict:
+    """
+    {"bpm": {...} or None, "key": {...} or None} for an audio file, or for
+    `audio` (samples, channels) at `audio_rate` when it's already in memory.
+    """
+    if audio is not None:
+        import soxr
+        mono = np.asarray(audio, dtype=np.float32)
+        mono = mono.mean(axis=1) if mono.ndim == 2 else mono
+        mono = soxr.resample(mono, audio_rate, SAMPLE_RATE).astype(np.float32) if audio_rate != SAMPLE_RATE else mono
+    else:
+        mono = load_mono(path)
     result = {"bpm": None, "key": None}
     if tracker is not None:
         try:

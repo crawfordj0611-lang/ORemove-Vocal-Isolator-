@@ -62,7 +62,7 @@ from urllib.parse import unquote
 
 APP_TITLE = "ORemove"
 APP_TAGLINE = "AI Powered Vocal Isolator"
-APP_VERSION = "1.5.8"
+APP_VERSION = "1.5.9"
 
 # True when running as the packaged app (built with PyInstaller).
 FROZEN = getattr(sys, "frozen", False)
@@ -793,7 +793,9 @@ _cache = {"key": None, "separator": None, "safe": False, "device": ""}
 # and whether PyTorch compiles the model's repeated blocks (torch.compile,
 # Apple GPUs). Which is fastest depends on the chip, so the speed test in
 # Settings measures them and saves the winner; until then the defaults are used.
-_engine_profile = {"fp16": None, "compile": None}  # None = default
+# "batch": chunks separated at once; "spectral": "real" or "native" spectral
+# maths on Apple GPUs; "threads": PyTorch threads on the CPU.
+_engine_profile = {"fp16": None, "compile": None, "batch": None, "spectral": None, "threads": None}  # None = default
 
 
 def _describe_device(separator) -> str:
@@ -886,6 +888,199 @@ def _beat_tracker():
     return _tracker["instance"]
 
 
+_tracker_lock = threading.Lock()
+
+
+def write_audio(audio, target: Path, output_format: str, subtype: str):
+    """Write a (samples, 2) float32 stem: WAV with soundfile, MP3 (320 kbps) with FFmpeg."""
+    import numpy as np
+    if output_format == "WAV":
+        import soundfile as sf
+        sf.write(str(target), audio, 44100, subtype=subtype, format="WAV")
+        return
+    # As audio-separator did (through pydub): 16-bit samples into FFmpeg's MP3 encoder.
+    pcm = (audio * 32767).astype(np.int16).tobytes()
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "error", "-nostdin", "-y", "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "pipe:0",
+         "-c:a", "libmp3lame", "-b:a", "320k", "-f", "mp3", str(target)],
+        input=pcm, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=NO_WINDOW)
+    if proc.returncode != 0:
+        reason = (proc.stderr.decode("utf-8", "replace").strip().splitlines() or ["MP3 encoding failed"])[-1]
+        raise RuntimeError(reason)
+
+
+def _default_batch() -> int:
+    """Chunks separated at once when the speed test hasn't measured it: 2 on NVIDIA cards with 10 GB or more."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            total = torch.cuda.get_device_properties(0).total_memory
+            return 2 if total >= 10 * 1024 ** 3 else 1
+    except Exception:
+        pass
+    return 1
+
+
+def _chunk_batch() -> int:
+    batch = _engine_profile.get("batch") or _default_batch()
+    limit = _cache.get("batch_limit")
+    return max(1, min(batch, limit) if limit else batch)
+
+
+def _complex_ops_on_gpu(device) -> bool:
+    """Whether PyTorch can do the models' complex-number maths on this (Apple) GPU."""
+    try:
+        from audio_separator.separator.uvr_lib_v5.device_utils import should_fallback_to_cpu_for_complex_ops
+        return not should_fallback_to_cpu_for_complex_ops(device)
+    except Exception:
+        return False
+
+
+def _real_spectral(instance) -> bool:
+    """
+    Apple GPUs: do the spectral maths with real numbers when PyTorch can't do
+    the complex-number versions on the GPU (they would otherwise run on the
+    CPU, copying audio back and forth for every chunk). The speed test can
+    also choose it when it measures faster.
+    """
+    try:
+        device = next(instance.model_run.parameters()).device
+    except Exception:
+        return False
+    if device.type != "mps":
+        return False
+    choice = _engine_profile.get("spectral")
+    if choice in ("real", "native"):
+        return choice == "real"
+    return not _complex_ops_on_gpu(device)
+
+
+def physical_cores() -> int | None:
+    """The number of physical CPU cores (not hyper-threads), or None if unknown."""
+    try:
+        if sys.platform == "darwin":
+            out = subprocess.run(["sysctl", "-n", "hw.physicalcpu"], capture_output=True, text=True, timeout=5)
+            return int(out.stdout.strip()) or None
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            size = wintypes.DWORD(0)
+            # RelationProcessorCore = 0: one record per physical core.
+            kernel32.GetLogicalProcessorInformationEx(0, None, ctypes.byref(size))
+            buffer = ctypes.create_string_buffer(size.value)
+            if not kernel32.GetLogicalProcessorInformationEx(0, buffer, ctypes.byref(size)):
+                return None
+            count, offset = 0, 0
+            while offset < size.value:
+                record_size = int.from_bytes(buffer.raw[offset + 4:offset + 8], "little")
+                if record_size <= 0:
+                    break
+                count += 1
+                offset += record_size
+            return count or None
+        cores = set()
+        with open("/proc/cpuinfo") as f:
+            physical = core = None
+            for line in f:
+                if line.startswith("physical id"):
+                    physical = line.split(":")[1].strip()
+                elif line.startswith("core id"):
+                    core = line.split(":")[1].strip()
+                    cores.add((physical, core))
+        return len(cores) or None
+    except Exception:
+        return None
+
+
+_cpu_tuned = {"done": False}
+
+
+def tune_cpu(log=lambda _t: None):
+    """
+    CPU edition: one PyTorch thread per physical core (hyper-threads share a
+    core's maths units, so extra threads mostly add overhead), unless the speed
+    test measured otherwise; and treat tiny "denormal" numbers as zero, which
+    the CPU otherwise handles very slowly (no audible effect: they're below
+    -700 dB).
+    """
+    if _cpu_tuned["done"]:
+        return
+    _cpu_tuned["done"] = True
+    try:
+        import torch
+        torch.set_flush_denormal(True)
+        if torch.cuda.is_available() or (getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()):
+            return
+        threads = _engine_profile.get("threads") or physical_cores()
+        if threads and threads != torch.get_num_threads():
+            torch.set_num_threads(int(threads))
+        log(f"CPU: {torch.get_num_threads()} threads ({os.cpu_count()} logical cores, "
+            f"{physical_cores() or '?'} physical)")
+    except Exception as exc:
+        log(f"CPU tuning skipped: {exc}")
+
+
+class _FastModelLoading:
+    """
+    Load Roformer models faster: don't fill the new model with random starting
+    weights (every weight is replaced from the model file straight after, and
+    loading is strict, so none can be missed), and memory-map the file instead
+    of reading it into memory and then copying it.
+    """
+
+    _NO_INIT = ("uniform_", "normal_", "kaiming_uniform_", "kaiming_normal_", "xavier_uniform_",
+                "xavier_normal_", "trunc_normal_", "orthogonal_", "constant_", "zeros_", "ones_")
+
+    def __enter__(self):
+        self._saved = []
+        try:
+            import torch
+            for name in self._NO_INIT:
+                original = getattr(torch.nn.init, name, None)
+                if original is not None:
+                    self._saved.append((torch.nn.init, name, original))
+                    setattr(torch.nn.init, name, lambda tensor, *args, **kwargs: tensor)
+        except Exception:
+            pass  # a speed-up only: load normally
+        try:
+            from audio_separator.separator.roformer import roformer_loader
+            original_load = roformer_loader.torch.load
+
+            def load(path, *args, map_location=None, **kwargs):
+                if isinstance(path, (str, os.PathLike)) and "mmap" not in kwargs:
+                    try:
+                        # The model is moved to the GPU afterwards anyway.
+                        return original_load(path, *args, map_location="cpu", mmap=True, **kwargs)
+                    except Exception:
+                        pass
+                return original_load(path, *args, map_location=map_location, **kwargs)
+
+            self._loader_module, self._original_load = roformer_loader.torch, original_load
+            roformer_loader.torch = _TorchProxy(roformer_loader.torch, load)
+            self._roformer_loader = roformer_loader
+        except Exception:
+            self._roformer_loader = None
+        return self
+
+    def __exit__(self, *_exc):
+        for module, name, original in self._saved:
+            setattr(module, name, original)
+        if self._roformer_loader is not None:
+            self._roformer_loader.torch = self._loader_module
+        return False
+
+
+class _TorchProxy:
+    """`torch` with a different `load`, for one module only."""
+
+    def __init__(self, torch_module, load):
+        self._torch, self.load = torch_module, load
+
+    def __getattr__(self, name):
+        return getattr(self._torch, name)
+
+
 def _release_separator():
     """Drop the loaded model and free its GPU memory."""
     _cache["key"] = _cache["separator"] = None
@@ -923,14 +1118,39 @@ class ExtractionPipeline:
         self._stage_cb = stage
         self._title_cb = title
         self.cancel_event = cancel_event or threading.Event()
-        self._index, self._count = 0, 1  # position in the current batch
+        self._count = 1                   # songs in the current batch
         self._shown = 0.0                 # highest progress shown for the current item
         self.run_device = ""              # what the loaded model runs on, e.g. "RTX 4070 SUPER"
         self.on_model_download = None     # optional (percent, total bytes) callback
         # Seconds spent in each step, for the breakdown on the results screen.
         self.timings = {"analyse": 0.0, "audio": 0.0, "engine": 0.0, "model_download": 0.0, "model_load": 0.0,
                         "separate": 0.0, "save": 0.0}
+        self._timing_lock = threading.Lock()
         self.gpu_memory_mb = 0.0          # peak GPU memory used while separating (proof the GPU worked)
+        # In a batch, songs overlap: the next one downloads while this one
+        # separates, and the previous one is saved. Each thread knows which
+        # song it is working on; only the song on screen updates the progress
+        # bar and status line (the others still write to the activity log).
+        self._local = threading.local()
+        self._ui_item = 0                 # the song the screen shows; None = whichever reports
+        self.overlapped = False           # True when steps of different songs ran at the same time
+        self._warming = False             # the model is loading before the first song
+
+    def _item(self):
+        return getattr(self._local, "item", self._ui_item)
+
+    def _on_screen(self) -> bool:
+        return self._ui_item is None or self._item() == self._ui_item
+
+    def add_time(self, key: str, seconds: float):
+        with self._timing_lock:
+            self.timings[key] += seconds
+
+    def _show_item(self, i):
+        """Put song `i` on screen (its progress restarts from where it is)."""
+        if i != self._ui_item:
+            self._ui_item = i
+            self._shown = 0.0
 
     def check_cancel(self):
         """Stop between steps once the user has pressed Stop."""
@@ -939,19 +1159,27 @@ class ExtractionPipeline:
 
     def progress(self, value):
         """Report progress of the current item, scaled to the whole batch. Never goes backwards."""
+        if not self._on_screen():
+            return
         if value is not None:
             value = max(value, self._shown)
             self._shown = value
-        self._progress_cb(None if value is None else (self._index + value) / self._count)
+        self._progress_cb(None if value is None else (self._item() + value) / self._count)
 
     def stage(self, name, detail):
-        prefix = f"File {self._index + 1} of {self._count}  ·  " if self._count > 1 else ""
+        if not self._on_screen():
+            return
+        prefix = f"File {self._item() + 1} of {self._count}  ·  " if self._count > 1 else ""
         self._stage_cb(name, prefix + detail)
+
+    def show_title(self, title: str):
+        if self._on_screen():
+            self._title_cb(title)
 
     # ---- Step 1: download --------------------------------------------------
 
-    def download_youtube(self, url: str, download_dir: Path, wav: Path) -> str:
-        """Download a YouTube video's audio to `wav`, with the newest yt-dlp. Returns its title."""
+    def download_youtube(self, url: str, download_dir: Path) -> tuple[str, Path]:
+        """Download a YouTube video's audio with the newest yt-dlp. Returns (title, audio file)."""
         self._ensure_deno()
         with _ytdlp_lock:  # yt-dlp mustn't be updated while it runs
             for attempt in (1, 2):
@@ -959,10 +1187,9 @@ class ExtractionPipeline:
                 self.log(f"Using yt-dlp {version}.")
                 try:
                     title = self.fetch_title(url)
-                    self._title_cb(title)
+                    self.show_title(title)
                     self.check_cancel()
-                    self.download_wav(url, download_dir).replace(wav)
-                    return title
+                    return title, self.download_audio(url, download_dir)
                 except YouTubeChanged:
                     # Maybe YouTube changed and yt-dlp has a fix already: check
                     # now (not just once a day) and retry once with the update.
@@ -1044,8 +1271,8 @@ class ExtractionPipeline:
         self.log(f"Video: {title}{length}")
         return title
 
-    def download_wav(self, url: str, work_dir: Path) -> Path:
-        """Download the best audio stream and convert it to WAV. Returns the WAV path."""
+    def download_audio(self, url: str, work_dir: Path) -> Path:
+        """Download the best audio stream as it is (it's decoded straight into memory later)."""
         import yt_dlp
         from yt_dlp.utils import DownloadError
 
@@ -1066,7 +1293,7 @@ class ExtractionPipeline:
                     self.progress(None)
             elif d.get("status") == "finished":
                 self.progress(DOWNLOAD_SHARE)
-                self.log("Download finished. Converting to WAV with FFmpeg...")
+                self.log("Download finished.")
 
         opts = {
             # Best audio-only stream (usually Opus ~160k or AAC ~128k on YouTube);
@@ -1083,9 +1310,6 @@ class ExtractionPipeline:
             "logger": _YtDlpLogger(self.log),
             "progress_hooks": [on_progress],
             **ytdlp_js_options(),
-            # Decode straight to uncompressed WAV so no extra lossy step is added
-            # before separation.
-            "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "wav"}],
         }
 
         self.log("Downloading audio...")
@@ -1097,11 +1321,12 @@ class ExtractionPipeline:
             self.check_cancel()
             raise self._download_error(exc) from exc
 
-        wav = work_dir / "source.wav"
-        if not wav.exists():
-            raise PipelineError("The download finished but no WAV file was produced. Is FFmpeg working?")
-        self.log(f"Audio ready ({wav.stat().st_size / 1_048_576:.1f} MB WAV).")
-        return wav
+        files = [f for f in work_dir.glob("source.*") if f.suffix not in (".part", ".ytdl") and f.is_file()]
+        if not files:
+            raise PipelineError("The download finished but no audio file was produced.")
+        audio = max(files, key=lambda f: f.stat().st_size)
+        self.log(f"Audio downloaded ({audio.stat().st_size / 1_048_576:.1f} MB).")
+        return audio
 
     @staticmethod
     def _download_error(exc: Exception) -> PipelineError:
@@ -1125,36 +1350,28 @@ class ExtractionPipeline:
             "installs yt-dlp updates automatically, so try again later, or use an audio file instead "
             "(your own files always work).")
 
-    def convert_local_file(self, src: Path, dest: Path) -> Path:
-        """Decode a local audio (or video) file to WAV with FFmpeg."""
-        self.log(f"Reading {src}")
-        self.stage("download", f"Reading {src.name}")
-        self.progress(None)
-        if not src.is_file():
-            raise PipelineError(f"File not found: {src}")
-        # 24-bit keeps the full quality of 24-bit WAV/FLAC sources.
-        proc = subprocess.Popen(
-            ["ffmpeg", "-v", "error", "-y", "-i", str(src), "-vn", "-ac", "2",
-             "-c:a", "pcm_s24le", str(dest)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, creationflags=NO_WINDOW)
-        while proc.poll() is None:
-            if self.cancel_event.is_set():
-                proc.kill()
-                proc.wait()
-                raise Cancelled()
-            time.sleep(0.1)
-        stderr = proc.stderr.read()
-        if proc.returncode != 0 or not dest.exists():
-            reason = (stderr.strip().splitlines() or ["not a readable audio file"])[-1]
-            raise PipelineError(f"Couldn't read {src.name}: {reason}")
-        self.progress(DOWNLOAD_SHARE)
-        return dest
+    def decode(self, path: Path, name: str):
+        """Decode an audio (or video) file straight into memory: float32 stereo at 44.1 kHz."""
+        import oremove_engine as eng
+        try:
+            return eng.decode(path, cancel=self.check_cancel, creationflags=NO_WINDOW)
+        except Cancelled:
+            raise
+        except FileNotFoundError as exc:
+            raise PipelineError("FFmpeg was not found. Reinstall ORemove.") from exc
+        except Exception as exc:
+            raise PipelineError(f"Couldn't read {name}: {exc}") from exc
 
     # ---- Step 2: separation -----------------------------------------------
 
-    def separate(self, wav: Path, job: Job, stems_dir: Path) -> list[Path]:
-        """Run UVR on `wav`, writing stems into `stems_dir`. Returns their paths."""
+    def separate(self, song: dict, job: Job, stems_dir: Path) -> list[tuple[str, object]]:
+        """
+        Separate one song. Returns [(stem name, audio)] in saving order, where
+        audio is a (samples, 2) array (Roformer models, run by oremove_engine)
+        or a file in `stems_dir` (MDX-Net, run by audio-separator from a WAV).
+        """
         separator = self._load_separator(job, stems_dir)
+        roformer = getattr(separator.model_instance, "is_roformer", False)
 
         self.log("Separating stems...")
         self.stage("separate", f"Separating stems on {self.run_device}" if self.run_device else "Separating stems")
@@ -1178,12 +1395,14 @@ class ExtractionPipeline:
                 reported["logged"] = pct
                 self.log(f"  separating... {pct}% ({time.monotonic() - started:.0f}s)")
 
-        global _progress_cancel
-        _set_progress_sink(on_progress)
-        _progress_cancel = self.check_cancel
+        def attempt(separator):
+            if roformer:
+                return self._separate_roformer(separator, song, on_progress)
+            return self._separate_file(separator, song, stems_dir, on_progress)
+
         _reset_gpu_memory_peak()
         try:
-            produced = _run_separator(separator, wav)
+            stems = attempt(separator)
         except Cancelled:
             raise
         except Exception as exc:
@@ -1192,14 +1411,13 @@ class ExtractionPipeline:
             # The GPU ran out of memory (another app may be using it, or the
             # song is very long): free everything and retry once with the
             # lower-memory settings, which keep 16-bit (half the memory of
-            # full precision) but turn off batching and larger GPU chunks.
+            # full precision) but separate one chunk at a time.
             self.log("GPU ran out of memory; freeing memory and retrying with lower-memory settings...")
             _release_separator()
             separator = self._load_separator(job, stems_dir, safe=True)
             reported.update(fraction=0.0, logged=-10)
-            _set_progress_sink(on_progress)
             try:
-                produced = _run_separator(separator, wav)
+                stems = attempt(separator)
             except Cancelled:
                 raise
             except Exception as exc2:
@@ -1210,11 +1428,9 @@ class ExtractionPipeline:
                         "MDX-Net Inst HQ 3, which needs much less memory.") from exc2
                 raise PipelineError(f"Separation failed: {exc2}") from exc2
         finally:
-            _set_progress_sink(None)
-            _progress_cancel = None
             _free_gpu_cache()
         elapsed = time.monotonic() - started
-        self.timings["separate"] += elapsed
+        self.add_time("separate", elapsed)
         self.log(f"Separated in {elapsed:.1f}s")
         peak = _gpu_memory_peak_mb()
         if peak is not None:
@@ -1222,14 +1438,54 @@ class ExtractionPipeline:
             self.log(f"GPU memory used while separating: {peak:.0f} MB")
             if peak < 100:
                 self.log("Warning: the GPU was barely used during separation; it may have run on the CPU.")
-
-        # audio-separator returns file names relative to output_dir.
-        paths = [p if p.is_absolute() else stems_dir / p for p in map(Path, produced)]
-        paths = [p for p in paths if p.exists()]
-        if not paths:
+        if not stems:
             raise PipelineError("The model ran but produced no output files.")
         self.progress(SEPARATED_AT)
-        return paths
+        return stems
+
+    def _separate_roformer(self, separator, song: dict, on_progress) -> list[tuple[str, object]]:
+        import oremove_engine as eng
+        instance = separator.model_instance
+        batch = 1 if _cache["safe"] else _chunk_batch()
+        run = eng.Separation(instance, batch=batch, real_spectral=_real_spectral(instance),
+                             progress=lambda done, total: on_progress("separate", done, total),
+                             cancel=self.check_cancel, log=self.log)
+        if _cache.get("logged_engine") != _cache["key"]:
+            _cache["logged_engine"] = _cache["key"]
+            details = [f"{batch} chunk{'s' if batch > 1 else ''} at a time"]
+            if run.real_spectral:
+                details.append("spectral maths on the GPU without complex numbers")
+            self.log("Engine: " + ", ".join(details))
+        stems = run.run(song["audio"])
+        if run.real_failed:
+            _engine_profile["spectral"] = "native"  # for this session; the speed test can measure again
+        if run.batch < batch:
+            _cache["batch_limit"] = run.batch  # remember: this GPU has less room than expected
+        return stems
+
+    def _separate_file(self, separator, song: dict, stems_dir: Path, on_progress) -> list[tuple[str, object]]:
+        """MDX-Net: audio-separator reads a WAV and writes the stems itself."""
+        import soundfile as sf
+        wav = stems_dir.parent / f"input{song['index']}.wav"
+        if not wav.exists():
+            sf.write(str(wav), song["audio"].T, 44100, subtype=song["subtype"])
+        global _progress_cancel
+        _install_progress_hooks()
+        _set_progress_sink(on_progress)
+        _progress_cancel = self.check_cancel
+        try:
+            produced = _run_separator(separator, wav)
+        finally:
+            _set_progress_sink(None)
+            _progress_cancel = None
+        # audio-separator returns file names relative to output_dir.
+        paths = [p if p.is_absolute() else stems_dir / p for p in map(Path, produced)]
+        stems = []
+        for path in paths:
+            if path.exists():
+                label = re.search(r"_\(([^)]+)\)_", path.name)
+                stems.append((label.group(1) if label else "Stem", path))
+        return stems
 
     def _load_separator(self, job: Job, stems_dir: Path, safe: bool = False):
         """
@@ -1250,7 +1506,7 @@ class ExtractionPipeline:
                 "audio-separator is not installed correctly. "
                 "Run: pip install -r requirements.txt"
             ) from exc
-        self.timings["engine"] += time.monotonic() - engine_started
+        self.add_time("engine", time.monotonic() - engine_started)
 
         cuda = torch.cuda.is_available()
         mps = bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
@@ -1264,7 +1520,9 @@ class ExtractionPipeline:
         # 16-bit stays on in low-memory mode: it halves the model's memory use.
         fp16 = (cuda or mps) and roformer and _engine_profile["fp16"] is not False
         compile_blocks = mps and not safe and roformer and bool(_engine_profile["compile"])
-        key = (job.model_file, job.output_format, job.faster, safe, gpu_settings, fp16, compile_blocks)
+        # Roformer stems are written by ORemove, so the format doesn't need a reload.
+        key = (job.model_file, None if roformer else job.output_format, job.faster, safe, gpu_settings, fp16,
+               compile_blocks)
         if _cache["key"] == key:
             self.run_device = _cache.get("device", "")
             self._engine_cb(self.run_device)
@@ -1349,167 +1607,342 @@ class ExtractionPipeline:
 
         _install_progress_hooks()
         _set_progress_sink(on_download)
+        tune_cpu(self.log)
         load_started = time.monotonic()
         try:
-            separator.load_model(model_filename=job.model_file)
+            with _FastModelLoading():
+                separator.load_model(model_filename=job.model_file)
         except Exception as exc:
             raise PipelineError(f"Could not load model '{job.model_file}': {exc}") from exc
         finally:
             _set_progress_sink(None)
-            self.timings["model_load" if model_cached else "model_download"] += time.monotonic() - load_started
+            self.add_time("model_load" if model_cached else "model_download", time.monotonic() - load_started)
         self.progress(MODEL_LOAD_AT)
         _cache.update(key=key, separator=separator, safe=safe, device=_describe_device(separator))
         self.run_device = _cache["device"]
-        self.log(f"Model running on: {self.run_device}")
+        self.log(f"Model running on: {self.run_device}" + (f" (loaded in {time.monotonic() - load_started:.1f}s)"
+                                                           if model_cached else ""))
+        if mps and roformer:
+            device = getattr(separator.model_instance, "torch_device", None)
+            on_gpu = _complex_ops_on_gpu(device) if device is not None else False
+            self.log("Apple GPU: complex-number maths " + ("supported" if on_gpu else "not supported, using real-number maths")
+                     + f"; spectral maths: {'real' if _real_spectral(separator.model_instance) else 'native'}")
         self._engine_cb(self.run_device)
         if self.run_device == "the CPU":
             self.log("Running on the CPU is much slower than a GPU: a full song can take 15 minutes or more with BS-Roformer.")
         return separator
 
-    # ---- Step 3: put the stems where they belong ---------------------------
+    # ---- Step 3: save the stems where they belong --------------------------
 
-    def file_stems(self, stems: list[Path], base_name: str, output_dir: Path) -> list[Path]:
+    @staticmethod
+    def stem_target(stem_name: str, base_name: str, suffix: str, output_dir: Path) -> Path:
+        """acapellas/<song> (Acapella).wav, instrumentals/<song> (Instrumental).wav, or <song> (<stem>).wav."""
+        label = stem_name.lower().replace("_", " ")
+        # Check instrumental first: "no vocals" also contains "vocals".
+        # Roformer models call the instrumental stem "other".
+        if label in ("instrumental", "other", "no vocals") or "no vocals" in label:
+            folder = output_dir / "instrumentals"
+            target = folder / f"{base_name} (Instrumental){suffix}"
+        elif label == "vocals":
+            folder = output_dir / "acapellas"
+            target = folder / f"{base_name} (Acapella){suffix}"
+        else:
+            folder = output_dir
+            target = folder / f"{base_name} ({stem_name}){suffix}"
+        folder.mkdir(parents=True, exist_ok=True)
+        return unique_path(target)
+
+    def save_stems(self, stems: list[tuple[str, object]], song: dict, job: Job) -> list[Path]:
         """
-        Copy each stem into acapellas/ or instrumentals/, named after the video
-        or file. audio-separator names files like 'input0_(Vocals)_<model>.wav'.
+        Write each stem straight into the output folder (both at once). MDX-Net
+        stems, already written by audio-separator, are copied there instead.
         """
         self.stage("save", "Saving stems")
-        acapella_dir = output_dir / "acapellas"
-        instrumental_dir = output_dir / "instrumentals"
-        acapella_dir.mkdir(parents=True, exist_ok=True)
-        instrumental_dir.mkdir(parents=True, exist_ok=True)
+        suffix = "." + job.output_format.lower()
+        (job.output_dir / "acapellas").mkdir(parents=True, exist_ok=True)
+        (job.output_dir / "instrumentals").mkdir(parents=True, exist_ok=True)
+        targets = [self.stem_target(name, song["base_name"], suffix, job.output_dir) for name, _ in stems]
+        errors = []
 
-        saved = []
-        for stem in stems:
-            label = stem.name.lower()
-            # Check instrumental first: "(no vocals)" also contains "vocals)".
-            # Roformer models call the instrumental stem "other".
-            if any(t in label for t in ("(instrumental)", "(other)", "(no vocals)", "(no_vocals)")):
-                target = instrumental_dir / f"{base_name} (Instrumental){stem.suffix}"
-            elif "(vocals)" in label:
-                target = acapella_dir / f"{base_name} (Acapella){stem.suffix}"
-            else:
-                # A model with other stem names: keep it, unsorted, with its stem label.
-                stem_label = re.search(r"_\(([^)]+)\)_", stem.name)
-                suffix = stem_label.group(1) if stem_label else "Stem"
-                target = output_dir / f"{base_name} ({suffix}){stem.suffix}"
-            target = unique_path(target)
-            # Copy, don't move: the temp folder is private to the current user
-            # (Python restricts it on Windows), and a moved file keeps that
-            # restrictive permission, so apps like Windows Media Player get
-            # "permission denied". A copy inherits the output folder's normal
-            # permissions. The temp folder is deleted afterwards anyway.
-            shutil.copyfile(stem, target)
-            saved.append(target)
-        return saved
+        def write(audio, target):
+            try:
+                if isinstance(audio, Path):
+                    # Copy, don't move: the temp folder is private to the
+                    # current user, and a moved file keeps that restrictive
+                    # permission (apps like Windows Media Player then get
+                    # "permission denied"). A copy gets the folder's normal ones.
+                    shutil.copyfile(audio, target)
+                else:
+                    write_audio(audio, target, job.output_format, song["subtype"])
+            except Exception as exc:
+                target.unlink(missing_ok=True)
+                errors.append(exc)
+
+        threads = [threading.Thread(target=write, args=(audio, target), daemon=True)
+                   for (_name, audio), target in zip(stems, targets)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        if errors:
+            for target in targets:
+                target.unlink(missing_ok=True)
+            raise PipelineError(f"Couldn't save the stems: {errors[0]}")
+        return targets
 
     # ---- Whole job --------------------------------------------------------
 
     def run(self, job: Job) -> tuple[list[dict], list[str]]:
         """
         Process every source in `job`. Returns (songs, failure messages), where
-        each song is {"title": str, "stems": [saved stem paths]}. A single
-        source raises on failure; in a batch, a failed item is skipped and
-        reported, and the rest still run. Stop raises Cancelled.
+        each song is {"title", "stems": [saved stem paths], "analysis"}. A
+        single source raises on failure; in a batch, a failed item is skipped
+        and reported, and the rest still run. Stop raises Cancelled.
+
+        Three steps run side by side, each in its own thread, so in a batch
+        the GPU never waits: getting song 2's audio (download and decode)
+        happens while song 1 separates, and song 1 is saved (and its BPM and
+        key detected) while song 2 separates. The model also loads while the
+        first song downloads.
         """
         if not ffmpeg_available():
             raise PipelineError(
                 "FFmpeg was not found on your PATH. Install FFmpeg (see README) "
                 "and restart the app."
             )
-        saved, failures = [], []
         self._count = len(job.sources)
+        results: list[dict | None] = [None] * self._count
+        failures: list[tuple[int, str]] = []
+        roformer = "roformer" in job.model_file.lower()
+
+        def fail(i: int, exc: Exception):
+            source = job.sources[i]
+            name = source if looks_like_url(source) else Path(source).name
+            failures.append((i, f"{name}: {exc}"))
+            self.log(f"Skipped {name}: {exc}")
 
         # Everything temporary lives here and is deleted at the end, even on errors.
         with tempfile.TemporaryDirectory(prefix="oremove_", ignore_cleanup_errors=True) as tmp:
             work_dir = Path(tmp)
             stems_dir = work_dir / "stems"
             stems_dir.mkdir()
-            for i, source in enumerate(job.sources):
-                self._index = i
-                try:
-                    saved.append(self._run_one(source, i, job, work_dir, stems_dir))
-                except Cancelled:
-                    raise
-                except PipelineError as exc:
-                    if self._count == 1:
-                        raise
-                    name = source if looks_like_url(source) else Path(source).name
-                    failures.append(f"{name}: {exc}")
-                    self.log(f"Skipped {name}: {exc}")
+            prepared: queue.Queue = queue.Queue(maxsize=1)   # songs whose audio is ready
+            to_save: queue.Queue = queue.Queue(maxsize=1)    # separated songs waiting to be saved
+            stop = threading.Event()                          # an error ends the whole run
+
+            def put(q, item):
+                while not stop.is_set():
+                    try:
+                        q.put(item, timeout=0.2)
+                        return
+                    except queue.Full:
+                        pass
+
+            def get(q):
+                while True:
+                    try:
+                        return q.get(timeout=0.2)
+                    except queue.Empty:
+                        if stop.is_set():
+                            return None
+
+            def preparer():
+                for i, source in enumerate(job.sources):
+                    if stop.is_set():
+                        return
+                    self._local.item = i
+                    try:
+                        item = self._prepare(source, i, job, work_dir)
+                        if self._warming:
+                            self.stage("separate", "Loading the AI model")
+                            self.progress(None)
+                    except BaseException as exc:  # handed to the GPU thread, which decides
+                        item = exc
+                    put(prepared, (i, item))
+                put(prepared, None)
+
+            def saver():
+                while True:
+                    entry = get(to_save)
+                    if entry is None:
+                        return
+                    i, song, stems = entry
+                    self._local.item = i
+                    try:
+                        results[i] = self._finish(song, stems, job)
+                    except Cancelled:
+                        stop.set()
+                        return
+                    except PipelineError as exc:
+                        if self._count == 1:
+                            failures.append((i, str(exc)))
+                            stop.set()
+                            return
+                        fail(i, exc)
+                    except Exception as exc:
+                        traceback.print_exc()
+                        fail(i, PipelineError(f"Couldn't save the stems: {exc}"))
+                    finally:
+                        for _name, audio in stems:
+                            if isinstance(audio, Path):
+                                audio.unlink(missing_ok=True)
+
+            threads = [threading.Thread(target=preparer, daemon=True, name="oremove-prepare"),
+                       threading.Thread(target=saver, daemon=True, name="oremove-save")]
+            for t in threads:
+                t.start()
+            error: BaseException | None = None
+            try:
+                self._warm_engine(job, stems_dir)
+                expected = 0
+                while True:
+                    self._show_item(expected)
+                    entry = get(prepared)
+                    if entry is None:
+                        break
+                    i, song = entry
+                    self._local.item = i
+                    expected = i + 1
+                    if isinstance(song, BaseException):
+                        if isinstance(song, PipelineError) and self._count > 1:
+                            fail(i, song)
+                            continue
+                        raise song
+                    self.show_title(song["title"])
+                    if i > 0:
+                        self.overlapped = True
+                    self.check_cancel()
+                    try:
+                        stems = self.separate(song, job, stems_dir)
+                    except PipelineError as exc:
+                        if self._count == 1:
+                            raise
+                        fail(i, exc)
+                        continue
+                    finally:
+                        if not roformer:
+                            (work_dir / f"input{i}.wav").unlink(missing_ok=True)
+                    put(to_save, (i, song, stems))
+                    if stop.is_set():
+                        break
+                # The GPU is done: whatever is left (saving the last song) may report.
+                self._show_item(None)
+                put(to_save, None)
+                threads[1].join()
+            except BaseException as exc:
+                error = exc
+            finally:
+                stop.set()
+                for t in threads:
+                    t.join(timeout=30)
+            if error is not None:
+                raise error
+            self.check_cancel()
+            if self._count == 1 and failures:
+                raise PipelineError(failures[0][1])
             self.log("Cleaning up temporary files...")
 
-        if failures and not saved:
-            raise PipelineError(f"None of the files could be processed. {failures[0]}")
-        return saved, failures
+        saved = [r for r in results if r is not None]
+        messages = [m for _i, m in sorted(failures)]
+        if messages and not saved:
+            raise PipelineError(f"None of the files could be processed. {messages[0]}")
+        return saved, messages
 
-    def _run_one(self, source: str, i: int, job: Job, work_dir: Path, stems_dir: Path) -> dict:
-        """Get one source as WAV, separate it, and save its stems."""
-        self._shown = 0.0
+    def _warm_engine(self, job: Job, stems_dir: Path):
+        """Load the model now, while the first song is still downloading."""
+        # Loading a cached model is quick and the download is what's worth
+        # watching; a first-use model download is shown instead.
+        self._local.item = 0 if not (MODEL_DIR / job.model_file).exists() else -1
+        self._warming = True
+        try:
+            self._load_separator(job, stems_dir)
+        except PipelineError:
+            pass  # reported again (with the song) when separating
+        finally:
+            self._warming = False
+
+    def _prepare(self, source: str, i: int, job: Job, work_dir: Path) -> dict:
+        """Get one source's audio into memory (download it first if it's a link)."""
         self.check_cancel()
-        wav = work_dir / f"input{i}.wav"  # unique per item: stems are named after it
-        audio_started = time.monotonic()
+        started = time.monotonic()
         if looks_like_url(source):
             if not is_youtube_url(source):
                 raise PipelineError("Only YouTube links are supported (youtube.com or youtu.be).")
             download_dir = work_dir / f"download{i}"
             download_dir.mkdir()
-            title = self.download_youtube(source, download_dir, wav)
+            title, path = self.download_youtube(source, download_dir)
+            subtype = "PCM_16"  # YouTube audio is lossy: 16-bit WAVs lose nothing
+            self.stage("download", "Decoding audio")
+            self.progress(None)
+            try:
+                audio = self.decode(path, "the downloaded audio")
+            finally:
+                shutil.rmtree(download_dir, ignore_errors=True)
         else:
             src = Path(source)
             title = src.stem
-            self._title_cb(title)
-            self.convert_local_file(src, wav)
-        self.timings["audio"] += time.monotonic() - audio_started
-        base_name = sanitize_filename(title)
+            self.show_title(title)
+            self.log(f"Reading {src}")
+            self.stage("download", f"Reading {src.name}")
+            self.progress(None)
+            if not src.is_file():
+                raise PipelineError(f"File not found: {src}")
+            subtype = "PCM_24"  # keeps the full quality of 24-bit WAV and FLAC sources
+            audio = self.decode(src, src.name)
+        self.progress(DOWNLOAD_SHARE)
+        self.add_time("audio", time.monotonic() - started)
+        self.log(f"Audio ready: {audio.shape[1] / 44100 / 60:.0f}:{audio.shape[1] / 44100 % 60:02.0f}")
+        return {"index": i, "title": title, "base_name": sanitize_filename(title), "audio": audio, "subtype": subtype}
 
+    def _finish(self, song: dict, stems: list[tuple[str, object]], job: Job) -> dict:
+        """Save one song's stems and detect its BPM and key."""
         self.check_cancel()
-        stems = self.separate(wav, job, stems_dir)
-        try:
-            self.check_cancel()
-            save_started = time.monotonic()
-            saved = self.file_stems(stems, base_name, job.output_dir)
-            self.timings["save"] += time.monotonic() - save_started
-        finally:
-            # Free disk space as we go; a batch of long WAVs adds up.
-            for path in [wav, *stems]:
-                path.unlink(missing_ok=True)
-        analysis = self.analyse(saved) if job.analyse else None
-        return {"title": title, "stems": saved, "analysis": analysis}
+        save_started = time.monotonic()
+        saved = self.save_stems(stems, song, job)
+        self.add_time("save", time.monotonic() - save_started)
+        instrumental = None
+        for (name, audio), path in zip(stems, saved):
+            if path.parent.name == "instrumentals" and not isinstance(audio, Path):
+                instrumental = audio
+        song.pop("audio", None)  # free the song's audio
+        analysis = self.analyse(saved, instrumental) if job.analyse else None
+        return {"title": song["title"], "stems": saved, "analysis": analysis}
 
     # ---- Step 4: BPM and key ------------------------------------------------
 
-    def analyse(self, saved: list[Path]) -> dict | None:
-        """Detect BPM and key from the saved instrumental. Never fails the song."""
+    def analyse(self, saved: list[Path], instrumental=None) -> dict | None:
+        """Detect BPM and key from the instrumental (in memory, or the saved file). Never fails the song."""
         source = next((p for p in saved if p.parent.name == "instrumentals"), saved[0] if saved else None)
         if source is None:
             return None
         started = time.monotonic()
         try:
             import oremove_analysis as oa
-            tracker = _beat_tracker()
-            if not tracker.installed():
-                self.log(f"Downloading the beat tracker (one time only, {oa.CHECKPOINT_MB} MB)...")
-                shown = {"pct": -1}
+            with _tracker_lock:
+                tracker = _beat_tracker()
+                if not tracker.installed():
+                    self.log(f"Downloading the beat tracker (one time only, {oa.CHECKPOINT_MB} MB)...")
+                    shown = {"pct": -1}
 
-                def on_progress(done, total):
-                    self.check_cancel()
-                    pct = int(done * 100 / total) if total else 0
-                    if pct != shown["pct"]:
-                        shown["pct"] = pct
-                        self.stage("save", f"Downloading the BPM detector, one time only ({pct}%)")
+                    def on_progress(done, total):
+                        self.check_cancel()
+                        pct = int(done * 100 / total) if total else 0
+                        if pct != shown["pct"]:
+                            shown["pct"] = pct
+                            self.stage("save", f"Downloading the BPM detector, one time only ({pct}%)")
 
-                try:
-                    tracker.install(lambda url, timeout, cb: _download(url, timeout=timeout, on_progress=cb),
-                                    on_progress)
-                except Cancelled:
-                    raise
-                except Exception as exc:
-                    self.log(f"Couldn't download the beat tracker ({exc}); detecting the key only.")
-                    tracker = None
+                    try:
+                        tracker.install(lambda url, timeout, cb: _download(url, timeout=timeout, on_progress=cb),
+                                        on_progress)
+                    except Cancelled:
+                        raise
+                    except Exception as exc:
+                        self.log(f"Couldn't download the beat tracker ({exc}); detecting the key only.")
+                        tracker = None
             self.stage("save", "Detecting BPM and key")
             self.progress(None)
-            result = oa.analyse(source, tracker, cancel=self.check_cancel, log=self.log)
+            result = oa.analyse(source, tracker, cancel=self.check_cancel, log=self.log,
+                                audio=instrumental, audio_rate=44100)
         except Cancelled:
             raise
         except Exception as exc:
@@ -1524,7 +1957,7 @@ class ExtractionPipeline:
                                                                 if key["confidence"] < 0.35 else ""))
         self.log(("Detected: " + ", ".join(parts) if parts else "BPM and key: not detected")
                  + f" in {time.monotonic() - started:.1f}s")
-        self.timings["analyse"] += time.monotonic() - started
+        self.add_time("analyse", time.monotonic() - started)
         return result
 
 
@@ -1738,7 +2171,8 @@ class Api:
         self._drag_active = False
         self._drag_ignore_until = 0.0
         saved = settings.get("engine_profile") or {}
-        _engine_profile.update(fp16=saved.get("fp16"), compile=saved.get("compile"))
+        _engine_profile.update(fp16=saved.get("fp16"), compile=saved.get("compile"), batch=saved.get("batch"),
+                               spectral=saved.get("spectral"), threads=saved.get("threads"))
 
     # Events -----------------------------------------------------------------
 
@@ -1951,52 +2385,107 @@ class Api:
             results = []
             try:
                 import torch
+                import oremove_engine as eng
                 cuda = torch.cuda.is_available()
                 mps = bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
-                if mps:
-                    candidates = [(True, False), (False, False), (True, True), (False, True)]
-                elif cuda:
-                    candidates = [(True, False), (False, False)]
-                else:
-                    self.emit("speedtest", done=True, summary="This computer runs ORemove on the CPU: there's nothing to tune.")
+                logical, physical = os.cpu_count() or 1, physical_cores()
+                if not (cuda or mps) and not (physical and physical != logical):
+                    self.emit("speedtest", done=True,
+                              summary="This computer runs ORemove on the CPU, already set up for its cores: there's nothing to tune.")
                     return
+                # A setting: fp16, compile, batch, spectral, threads. Each round tries
+                # variations of the best so far, so the number of runs stays small.
+                base = {"fp16": True, "compile": False, "batch": 1, "spectral": None, "threads": None}
+                if mps:
+                    rounds = [[{"fp16": True}, {"fp16": False}, {"fp16": True, "compile": True}, {"fp16": False, "compile": True}],
+                              ["spectral"], [{"batch": 2}]]
+                elif cuda:
+                    big = torch.cuda.get_device_properties(0).total_memory >= 12 * 1024 ** 3
+                    rounds = [[{"fp16": True}, {"fp16": False}], [{"batch": 2}] + ([{"batch": 4}] if big else [])]
+                else:
+                    base.update(fp16=False)
+                    rounds = [[{"threads": physical}, {"threads": logical}]]
+                seconds_long = 11 if not (cuda or mps) else 20  # 10 s or more: the normal chunk size
+
+                def describe(c):
+                    parts = [("16-bit" if c["fp16"] else "full precision")] if (cuda or mps) else []
+                    if c["compile"]:
+                        parts.append("compiled")
+                    if c["spectral"]:
+                        parts.append("real-number spectral maths" if c["spectral"] == "real" else "complex spectral maths")
+                    if c["batch"] > 1:
+                        parts.append(f"{c['batch']} chunks at a time")
+                    if c["threads"]:
+                        parts.append(f"{c['threads']} threads")
+                    return ", ".join(parts)
+
                 with tempfile.TemporaryDirectory(prefix="oremove_speed_") as tmp:
                     clip = Path(tmp) / "clip.wav"
-                    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "anoisesrc=d=20:c=pink:a=0.3",
-                                    "-f", "lavfi", "-i", "sine=f=220:d=20", "-filter_complex", "amix=inputs=2",
+                    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"anoisesrc=d={seconds_long}:c=pink:a=0.3",
+                                    "-f", "lavfi", "-i", f"sine=f=220:d={seconds_long}", "-filter_complex", "amix=inputs=2",
                                     "-ac", "2", "-ar", "44100", str(clip)], check=True, creationflags=NO_WINDOW)
+                    song = {"index": 0, "title": "clip", "base_name": "clip", "audio": eng.decode(clip, creationflags=NO_WINDOW),
+                            "subtype": "PCM_16"}
                     job = Job(sources=[], model_file=model, output_format="WAV", output_dir=Path(tmp), faster=True)
-                    label = lambda fp16, comp: ("16-bit" if fp16 else "full precision") + (", compiled" if comp else "")
-                    for n, (fp16, comp) in enumerate(candidates, 1):
-                        name = label(fp16, comp)
-                        self.emit("speedtest", step=n, total=len(candidates), status=f"Testing {name} ({n} of {len(candidates)})…")
-                        log(f"Speed test {n}/{len(candidates)}: {name}")
-                        _engine_profile.update(fp16=fp16, compile=comp)
-                        _release_separator()
-                        try:
-                            pipeline = ExtractionPipeline(log=lambda _t: None, progress=lambda _v: None)
-                            seconds = None
-                            for attempt in (1, 2):
-                                out = Path(tmp) / f"out{n}_{attempt}"
-                                out.mkdir()
-                                started = time.monotonic()
-                                pipeline.separate(clip, job, out)
-                                seconds = time.monotonic() - started
-                            results.append({"setting": name, "fp16": fp16, "compile": comp, "seconds": round(seconds, 1)})
-                            log(f"  {name}: {seconds:.1f}s for a 20-second clip")
-                        except Exception as exc:
-                            log(f"  {name}: didn't work ({exc})")
+                    total = sum(len(r) for r in rounds)
+                    n = 0
+                    best = None
+                    for round_ in rounds:
+                        if round_ == ["spectral"]:
+                            # Try the spectral maths the default didn't use.
+                            current = (best or base)["spectral"]
+                            if current is None:
+                                _engine_profile.update({k: v for k, v in (best or base).items() if k in _engine_profile})
+                                _release_separator()
+                                probe = ExtractionPipeline(log=lambda _t: None, progress=lambda _v: None)
+                                instance = probe._load_separator(job, Path(tmp)).model_instance
+                                current = "real" if _real_spectral(instance) else "native"
+                                if best:
+                                    best["spectral"] = current
+                            round_ = [{"spectral": "native" if current == "real" else "real"}]
+                        for change in round_:
+                            n += 1
+                            candidate = {**(best or base), **change}
+                            name = describe(candidate)
+                            self.emit("speedtest", step=n, total=total, status=f"Testing {name} ({n} of {total})…")
+                            log(f"Speed test {n}/{total}: {name}")
+                            _engine_profile.update({k: v for k, v in candidate.items() if k in _engine_profile})
+                            _cache.pop("batch_limit", None)
+                            _release_separator()
+                            try:
+                                if candidate["threads"]:
+                                    torch.set_num_threads(int(candidate["threads"]))
+                                pipeline = ExtractionPipeline(log=lambda _t: None, progress=lambda _v: None)
+                                seconds = None
+                                for attempt in ((1, 2) if (cuda or mps) else (1,)):
+                                    out = Path(tmp) / f"out{n}_{attempt}"
+                                    out.mkdir()
+                                    started = time.monotonic()
+                                    pipeline.separate(song, job, out)
+                                    seconds = time.monotonic() - started
+                                if _cache.get("batch_limit") and _cache["batch_limit"] < candidate["batch"]:
+                                    raise RuntimeError("not enough GPU memory")
+                                result = {**candidate, "setting": name, "seconds": round(seconds, 1)}
+                                results.append(result)
+                                log(f"  {name}: {seconds:.1f}s for a {seconds_long}-second clip")
+                                if best is None or result["seconds"] < best["seconds"]:
+                                    best = result
+                            except Exception as exc:
+                                log(f"  {name}: didn't work ({exc})")
                     _release_separator()
                 if not results:
                     raise RuntimeError("no setting worked")
-                best = min(results, key=lambda r: r["seconds"])
-                default = next((r for r in results if r["fp16"] and not r["compile"]), None)
-                _engine_profile.update(fp16=best["fp16"], compile=best["compile"])
+                default = results[0]
+                profile = {k: best[k] for k in ("fp16", "compile", "batch", "spectral", "threads")}
+                _engine_profile.update(profile)
+                _cache.pop("batch_limit", None)
+                if profile["threads"]:
+                    torch.set_num_threads(int(profile["threads"]))
                 save_settings({**load_settings(), **self._settings,
-                               "engine_profile": {"fp16": best["fp16"], "compile": best["compile"], "model": model,
-                                                  "results": results, "when": datetime.now().isoformat(timespec="minutes")}})
+                               "engine_profile": {**profile, "setting": best["setting"], "model": model, "results": results,
+                                                  "when": datetime.now().isoformat(timespec="minutes")}})
                 gain = f", {default['seconds'] / best['seconds']:.1f}× faster than the default" \
-                    if default and best is not default and best["seconds"] > 0 else ""
+                    if best is not default and best["seconds"] > 0 else ""
                 summary = f"Fastest here: {best['setting']}{gain}. ORemove now uses it."
                 log("Speed test done. " + summary)
                 self.emit("speedtest", done=True, summary=summary, results=results)
@@ -2200,7 +2689,8 @@ class Api:
         self.emit("done", songs=[self._song_view(e) for e in entries], failures=failures,
                   seconds=round(pipeline.timings["separate"], 1), total=round(seconds, 1),
                   timings={k: round(v, 1) for k, v in pipeline.timings.items()},
-                  gpu_memory_mb=round(pipeline.gpu_memory_mb), device=_badge_device(pipeline.run_device))
+                  gpu_memory_mb=round(pipeline.gpu_memory_mb), device=_badge_device(pipeline.run_device),
+                  overlapped=pipeline.overlapped)
         self.emit("models", models=self.models())  # a first run may have installed a model
 
     def _song_view(self, entry: dict) -> dict | None:
@@ -2410,6 +2900,51 @@ def _self_test_analysis(tmp: Path, log):
         raise PipelineError("key detection returned nothing")
 
 
+def _self_test_engine(tmp: Path, model_files: list[str], log):
+    """
+    ORemove's own Roformer loop must give the same stems as audio-separator's:
+    one chunk at a time, two at a time, and with the real-number spectral maths
+    used on Apple GPUs.
+    """
+    import numpy as np
+    import soundfile as sf
+    import oremove_engine as eng
+    clip = tmp / "engine.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "anoisesrc=d=11:c=pink:a=0.2",
+                    "-f", "lavfi", "-i", "sine=f=330:d=11", "-filter_complex", "amix=inputs=2",
+                    "-ac", "2", "-ar", "48000", "-c:a", "pcm_s24le", str(clip)], check=True, creationflags=NO_WINDOW)
+    wav = tmp / "engine44.wav"
+    audio = eng.decode(clip, creationflags=NO_WINDOW)
+    if audio.shape != (2, 11 * 44100):
+        raise PipelineError(f"decode: expected (2, {11 * 44100}) samples, got {audio.shape}")
+    sf.write(str(wav), audio.T, 44100, subtype="FLOAT")
+    for model_file in model_files:
+        job = Job(sources=[], model_file=model_file, output_format="WAV", output_dir=tmp / "engine_out", faster=True)
+        stems_dir = tmp / f"engine_{model_file[:12]}"
+        stems_dir.mkdir()
+        pipeline = ExtractionPipeline(log=lambda _t: None, progress=lambda _v: None)
+        separator = pipeline._load_separator(job, stems_dir)
+        started = time.monotonic()
+        produced = [stems_dir / p for p in _run_separator(separator, wav)]
+        library = [sf.read(str(p), dtype="float32")[0] for p in produced]
+        log(f"engine {model_file}: audio-separator {time.monotonic() - started:.1f}s")
+        instance = separator.model_instance
+        for batch, real in ((1, False), (2, False), (2, True)):
+            started = time.monotonic()
+            run = eng.Separation(instance, batch=batch, real_spectral=real)
+            if run.real_spectral != real:
+                raise PipelineError(f"{model_file}: the real-number spectral path isn't available for this model")
+            ours = run.run(audio)
+            if run.real_failed:
+                raise PipelineError(f"{model_file}: the real-number spectral path failed")
+            worst = max(float(np.abs(a[:len(b)] - b).max()) for (_n, a), b in zip(ours, library))
+            log(f"engine {model_file}: batch {batch}{', real spectral' if real else ''}: "
+                f"{time.monotonic() - started:.1f}s, largest difference {worst:.2e}")
+            if len(ours) != len(library) or worst > 2e-3:
+                raise PipelineError(f"{model_file}: ORemove's engine differs from audio-separator ({worst:.2e})")
+        _release_separator()
+
+
 def self_test(report_path: Path, model_files: list[str] | None) -> int:
     """
     Headless check used by the Windows build: FFmpeg is found, and a short
@@ -2447,24 +2982,43 @@ def self_test(report_path: Path, model_files: list[str] | None) -> int:
                 log(f"--- {model_file}" + (" [Faster]" if faster else "")
                     + (" [GPU code path]" if gpu_path else "") + (" [reuse]" if reuse else ""))
                 force_gpu_settings = gpu_path
-                stems_dir = tmp / f"stems{n}"
-                stems_dir.mkdir()
-                job = Job(sources=[], model_file=model_file, output_format="WAV",
-                          output_dir=tmp / f"out{n}", faster=faster)
+                job = Job(sources=[str(tone)], model_file=model_file, output_format="WAV",
+                          output_dir=tmp / f"out{n}", faster=faster, analyse=False)
                 pipeline = ExtractionPipeline(log=log, progress=lambda _v: None)
                 started = time.monotonic()
                 first_line = len(lines)
-                saved = pipeline.file_stems(pipeline.separate(tone, job, stems_dir), "Self Test",
-                                            job.output_dir)
+                songs, failures = pipeline.run(job)
+                saved = songs[0]["stems"]
                 for path in saved:
                     log(f"saved: {path.relative_to(job.output_dir)}")
                 kinds = sorted(p.parent.name for p in saved)
                 if kinds != ["acapellas", "instrumentals"]:
                     raise PipelineError(f"{model_file}: expected an acapella and an instrumental, got {kinds}")
-                if reuse and not any("Model already loaded" in l for l in lines[first_line:]):
+                if reuse and any("Loading UVR model" in l for l in lines[first_line:]):
                     raise PipelineError(f"{model_file}: the loaded model was not reused")
                 log(f"ok in {time.monotonic() - started:.1f}s")
             if not model_files:
+                force_gpu_settings = False
+                # A batch: songs overlap (download/decode, separate, save), a bad
+                # file is skipped, MP3 output, and BPM/key from the stem in memory.
+                log("--- batch of 3 (one unreadable), MP3")
+                bad = tmp / "not audio.wav"
+                bad.write_text("not audio")
+                tone2 = tmp / "tone 2.flac"
+                subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=330:duration=6",
+                                "-ac", "2", "-ar", "48000", str(tone2)], check=True, creationflags=NO_WINDOW)
+                job = Job(sources=[str(tone), str(bad), str(tone2)], model_file=best_model, output_format="MP3",
+                          output_dir=tmp / "batch", faster=True)
+                started = time.monotonic()
+                songs, failures = ExtractionPipeline(log=log, progress=lambda _v: None).run(job)
+                names = sorted(p.name for song in songs for p in song["stems"])
+                log(f"batch: {names}; failures: {failures}")
+                if len(songs) != 2 or len(failures) != 1 or len(names) != 4 or not all(n.endswith(".mp3") for n in names):
+                    raise PipelineError("the batch didn't give 2 songs (4 MP3 stems) and 1 failure")
+                if not all(p.stat().st_size > 50_000 for song in songs for p in song["stems"]):
+                    raise PipelineError("an MP3 stem is too small")
+                log(f"ok in {time.monotonic() - started:.1f}s")
+                _self_test_engine(tmp, [m.filename for m in MODELS if "roformer" in m.filename.lower()][::3], log)
                 _self_test_analysis(tmp, log)
         log("SELF-TEST PASSED")
         code = 0

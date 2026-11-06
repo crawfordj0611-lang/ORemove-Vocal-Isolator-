@@ -35,8 +35,8 @@ whenApiReady(async () => {
   if (state.welcome) showWelcome();
   const prof = state.engine_profile;
   if (prof && prof.results) {
-    const best = prof.results.find(r => r.fp16 === prof.fp16 && r.compile === prof.compile);
-    if (best) { $('speedStatus').textContent = `Using the fastest setting found: ${best.setting}`; $('speedRun').textContent = 'Run again'; }
+    const best = prof.setting || (prof.results.find(r => r.fp16 === prof.fp16 && r.compile === prof.compile) || {}).setting;
+    if (best) { $('speedStatus').textContent = `Using the fastest setting found: ${best}`; $('speedRun').textContent = 'Run again'; }
   }
   if (!state.ffmpeg) showStartError('FFmpeg is missing, so audio can\'t be read or written. Reinstall ORemove.');
   listenForEvents();
@@ -390,7 +390,8 @@ function showResults(list, failures, info) {
     const parts = [['getting audio', t.audio], ['first-time model download', t.model_download], ['starting the AI engine', t.engine],
                    ['loading the model', t.model_load], ['separating', t.separate], ['saving', t.save], ['BPM and key', t.analyse]]
       .filter(([, v]) => v >= 1).map(([k, v]) => `${k} ${fmt(v)}`);
-    timing.textContent = `Total ${fmt(info.total)}: ` + parts.join(' · ') + (info.gpu_memory_mb ? ` · GPU memory ${info.gpu_memory_mb} MB` : '');
+    timing.textContent = `Total ${fmt(info.total)}: ` + parts.join(' · ') + (info.gpu_memory_mb ? ` · GPU memory ${info.gpu_memory_mb} MB` : '')
+      + (info.overlapped ? ' · songs overlapped, so steps add up to more than the total' : '');
   }
   $('failures').classList.toggle('hidden', !(failures && failures.length));
   if (failures && failures.length) $('failures').textContent = `${failures.length} file${failures.length > 1 ? 's' : ''} couldn't be processed: ` + failures.join(' · ');
