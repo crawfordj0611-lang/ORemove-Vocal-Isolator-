@@ -178,7 +178,7 @@ class BeatTracker:
         self.spect = LogMelSpect(self.device)
 
     def beats(self, mono: np.ndarray, cancel=None) -> tuple[np.ndarray, np.ndarray]:
-        """Beat and downbeat times in seconds, for mono audio at 22050 Hz."""
+        """Beat and downbeat times in seconds, for mono audio at 22050 Hz (the activation is kept in .activation)."""
         import torch
         from .beat_this.postprocessor import Postprocessor
         self._load()
@@ -186,45 +186,99 @@ class BeatTracker:
         spect = self.spect(signal)
         beat, downbeat = _predict(self.model, spect, self.device, self.device == "cuda", cancel)
         found_beats, found_downbeats = Postprocessor(type="minimal", fps=FPS)(beat.cpu(), downbeat.cpu())
+        self.activation = beat.cpu().numpy()
         return np.asarray(found_beats, dtype=np.float64), np.asarray(found_downbeats, dtype=np.float64)
 
 
-def tempo_from_beats(beats: np.ndarray) -> dict | None:
+def refine_beats(beats: np.ndarray, activation=None) -> np.ndarray:
     """
-    The BPM implied by beat times: the median period over the steady part of
-    the song, refined with a straight-line fit through the beats that follow
-    it. Returns {"bpm", "confidence", "alternative"} or None.
+    Beat times between the tracker's 20 ms frames: the peak of a parabola
+    through the beat activation around each detected beat.
+    """
+    beats = np.asarray(beats, dtype=np.float64)
+    if activation is None:
+        return beats
+    act = np.asarray(activation, dtype=np.float64)
+    out = beats.copy()
+    for i, t in enumerate(beats):
+        f = int(round(t * FPS))
+        if 1 <= f < len(act) - 1:
+            a, b, c = act[f - 1], act[f], act[f + 1]
+            den = a - 2 * b + c
+            if den < 0:
+                out[i] = (f + float(np.clip(0.5 * (a - c) / den, -0.5, 0.5))) / FPS
+    return out
+
+
+def _robust_line(times: np.ndarray, index: np.ndarray) -> tuple[float, np.ndarray]:
+    """Fit times = a + period * index, down-weighting badly placed beats (Huber). Returns (period, residuals)."""
+    weights = np.ones(len(times))
+    period, res = 0.0, np.zeros(len(times))
+    for _ in range(4):
+        design = np.stack([np.ones(len(times)), index], 1) * weights[:, None]
+        start, period = np.linalg.lstsq(design, times * weights, rcond=None)[0]
+        res = times - (start + period * index)
+        scale = 1.4826 * float(np.median(np.abs(res))) + 1e-4
+        weights = np.minimum(1.0, 1.5 * scale / (np.abs(res) + 1e-9))
+    return float(period), res
+
+
+# Above this, a reading is at double tempo: nobody counts a song at 214 BPM.
+FOLD_ABOVE_BPM = 200.0
+
+
+def tempo_from_beats(beats: np.ndarray, activation=None) -> dict | None:
+    """
+    The BPM implied by beat times (refined with the beat `activation`, when
+    given): a straight line through every beat of the song, numbering the beats
+    so that a missed beat or an extra one doesn't throw it off. Songs whose
+    tempo really changes use their longest steady stretch instead. Returns
+    {"bpm", "confidence", "alternative"} or None.
     """
     if len(beats) < 8:
         return None
-    periods = np.diff(beats)
+    times = refine_beats(beats, activation)
+    periods = np.diff(times)
     median = float(np.median(periods))
     if median <= 0:
         return None
     steady = np.abs(periods / median - 1) < 0.06
     confidence = float(steady.mean())
-    # Refine over the longest run of steady beats: in a song at constant
-    # tempo, beat times lie on a line whose slope is the period.
-    best_start, best_len, run_start = 0, 0, None
-    for i, ok in enumerate(list(steady) + [False]):
-        if ok and run_start is None:
-            run_start = i
-        elif not ok and run_start is not None:
-            if i - run_start > best_len:
-                best_start, best_len = run_start, i - run_start
-            run_start = None
-    period = median
-    if best_len >= 8:
-        times = beats[best_start: best_start + best_len + 1]
-        period = float(np.polyfit(np.arange(len(times)), times, 1)[0])
+    # Number the beats: a gap of two periods is a missed beat; a beat less
+    # than 0.6 periods after the last is an extra one and is skipped.
+    kept, index = [times[0]], [0]
+    for t in times[1:]:
+        steps = (t - kept[-1]) / median
+        if steps < 0.6:
+            continue
+        kept.append(t)
+        index.append(index[-1] + max(1, int(round(steps))))
+    period, res = _robust_line(np.asarray(kept), np.asarray(index, dtype=np.float64))
+    if np.sqrt(np.mean(np.minimum(res ** 2, (0.5 * median) ** 2))) > 0.12 * median:
+        # Not one tempo: use the longest run of steady beats.
+        best_start, best_len, run_start = 0, 0, None
+        for i, ok in enumerate(list(steady) + [False]):
+            if ok and run_start is None:
+                run_start = i
+            elif not ok and run_start is not None:
+                if i - run_start > best_len:
+                    best_start, best_len = run_start, i - run_start
+                run_start = None
+        period = median
+        if best_len >= 8:
+            run = times[best_start: best_start + best_len + 1]
+            period = _robust_line(run, np.arange(len(run), dtype=np.float64))[0]
     bpm = 60.0 / period
+    alternative = None
+    if bpm >= FOLD_ABOVE_BPM:
+        alternative, bpm = round(bpm, 1), bpm / 2
     # Most music is made at a whole-number tempo: snap when it's that close.
     bpm = float(round(bpm)) if abs(bpm - round(bpm)) < 0.3 else round(bpm, 1)
-    alternative = None
-    if bpm < 85:
-        alternative = bpm * 2
-    elif bpm >= 150:
-        alternative = round(bpm / 2, 1)
+    if alternative is None:
+        if bpm < 85:
+            alternative = bpm * 2
+        elif bpm >= 150:
+            alternative = round(bpm / 2, 1)
     if alternative is not None and float(alternative).is_integer():
         alternative = int(alternative)
     return {"bpm": int(bpm) if float(bpm).is_integer() else bpm, "confidence": round(confidence, 2),
@@ -349,7 +403,7 @@ def analyse(path: Path, tracker: BeatTracker | None, cancel=None, log=lambda _t:
     if tracker is not None:
         try:
             beats, _downbeats = tracker.beats(mono, cancel)
-            result["bpm"] = tempo_from_beats(beats)
+            result["bpm"] = tempo_from_beats(beats, getattr(tracker, "activation", None))
         except Exception as exc:
             if cancel and type(exc).__name__ == "Cancelled":
                 raise

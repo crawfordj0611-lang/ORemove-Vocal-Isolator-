@@ -174,6 +174,14 @@ class Job:
     output_dir: Path
     faster: bool = False  # fewer overlapping passes: about 2x faster, slightly lower quality
     analyse: bool = True  # detect BPM and key after separating
+    acapella_dir: Path | None = None      # None: <output_dir>/acapellas
+    instrumental_dir: Path | None = None  # None: <output_dir>/instrumentals
+
+    def folder_for(self, kind: str) -> Path:
+        """Where acapellas ("Acapella") or instrumentals ("Instrumental") are saved."""
+        if kind == "Acapella":
+            return self.acapella_dir or self.output_dir / "acapellas"
+        return self.instrumental_dir or self.output_dir / "instrumentals"
 
 
 YOUTUBE_URL_RE = re.compile(
@@ -1635,19 +1643,24 @@ class ExtractionPipeline:
     # ---- Step 3: save the stems where they belong --------------------------
 
     @staticmethod
-    def stem_target(stem_name: str, base_name: str, suffix: str, output_dir: Path) -> Path:
-        """acapellas/<song> (Acapella).wav, instrumentals/<song> (Instrumental).wav, or <song> (<stem>).wav."""
+    def stem_target(stem_name: str, base_name: str, suffix: str, job: Job) -> Path:
+        """
+        <acapella folder>/<song> (Acapella).wav, <instrumental folder>/<song>
+        (Instrumental).wav, or <output folder>/<song> (<stem>).wav. The acapella
+        and instrumental folders are acapellas/ and instrumentals/ inside the
+        output folder, unless the user chose their own.
+        """
         label = stem_name.lower().replace("_", " ")
         # Check instrumental first: "no vocals" also contains "vocals".
         # Roformer models call the instrumental stem "other".
         if label in ("instrumental", "other", "no vocals") or "no vocals" in label:
-            folder = output_dir / "instrumentals"
+            folder = job.folder_for("Instrumental")
             target = folder / f"{base_name} (Instrumental){suffix}"
         elif label == "vocals":
-            folder = output_dir / "acapellas"
+            folder = job.folder_for("Acapella")
             target = folder / f"{base_name} (Acapella){suffix}"
         else:
-            folder = output_dir
+            folder = job.output_dir
             target = folder / f"{base_name} ({stem_name}){suffix}"
         folder.mkdir(parents=True, exist_ok=True)
         return unique_path(target)
@@ -1659,9 +1672,10 @@ class ExtractionPipeline:
         """
         self.stage("save", "Saving stems")
         suffix = "." + job.output_format.lower()
-        (job.output_dir / "acapellas").mkdir(parents=True, exist_ok=True)
-        (job.output_dir / "instrumentals").mkdir(parents=True, exist_ok=True)
-        targets = [self.stem_target(name, song["base_name"], suffix, job.output_dir) for name, _ in stems]
+        try:
+            targets = [self.stem_target(name, song["base_name"], suffix, job) for name, _ in stems]
+        except OSError as exc:
+            raise PipelineError(f"Couldn't create the folder to save the stems in: {exc}") from exc
         errors = []
 
         def write(audio, target):
@@ -1902,7 +1916,7 @@ class ExtractionPipeline:
         self.add_time("save", time.monotonic() - save_started)
         instrumental = None
         for (name, audio), path in zip(stems, saved):
-            if path.parent.name == "instrumentals" and not isinstance(audio, Path):
+            if stem_kind(path) == "Instrumental" and not isinstance(audio, Path):
                 instrumental = audio
         song.pop("audio", None)  # free the song's audio
         analysis = self.analyse(saved, instrumental) if job.analyse else None
@@ -1912,7 +1926,7 @@ class ExtractionPipeline:
 
     def analyse(self, saved: list[Path], instrumental=None) -> dict | None:
         """Detect BPM and key from the instrumental (in memory, or the saved file). Never fails the song."""
-        source = next((p for p in saved if p.parent.name == "instrumentals"), saved[0] if saved else None)
+        source = next((p for p in saved if stem_kind(p) == "Instrumental"), saved[0] if saved else None)
         if source is None:
             return None
         started = time.monotonic()
@@ -1990,6 +2004,15 @@ def human_size(path: Path) -> str:
 
 
 STEM_KINDS = {"acapellas": "Acapella", "instrumentals": "Instrumental"}
+
+
+def stem_kind(path: Path) -> str:
+    """ "Acapella", "Instrumental" or "Stem", from the name ORemove gave the file (or its folder, for old files)."""
+    stem = path.stem
+    for kind in ("Acapella", "Instrumental"):
+        if re.search(rf"\({kind}\)(?: \(\d+\))?$", stem):
+            return kind
+    return STEM_KINDS.get(path.parent.name, "Stem")
 
 
 def load_history() -> list[dict]:
@@ -2163,6 +2186,9 @@ class Api:
             "output_dir": settings.get("output_dir") or str(DEFAULT_OUTPUT_DIR),
             "ytdlp_auto": settings.get("ytdlp_auto") is not False,
             "analyse": settings.get("analyse") is not False,
+            # "" = the default (acapellas/ and instrumentals/ in the output folder)
+            "acapella_dir": settings.get("acapella_dir") or "",
+            "instrumental_dir": settings.get("instrumental_dir") or "",
         }
         _ytdlp["auto"] = self._settings["ytdlp_auto"]
         self._installing: str | None = None  # model being installed from the welcome card
@@ -2548,6 +2574,8 @@ class Api:
                 self._settings[key] = value
             elif key == "output_dir" and value:
                 self._settings[key] = str(value)
+            elif key in ("acapella_dir", "instrumental_dir") and isinstance(value, str):
+                self._settings[key] = value  # "" puts it back to the default
             elif key == "analyse" and isinstance(value, bool):
                 self._settings[key] = value
             elif key == "ytdlp_auto" and isinstance(value, bool):
@@ -2574,9 +2602,17 @@ class Api:
 
         threading.Thread(target=check, daemon=True).start()
 
-    def choose_folder(self):
-        result = self._window.create_file_dialog(_dialog("FOLDER"), directory=self._settings["output_dir"])
+    def choose_folder(self, kind: str = "output"):
+        """A folder picker for the output folder, or the "acapella" or "instrumental" folder."""
+        current = self._settings.get(f"{kind}_dir") or self._settings["output_dir"]
+        start = current if Path(current).is_dir() else str(Path.home())
+        result = self._window.create_file_dialog(_dialog("FOLDER"), directory=start)
         return result[0] if result else None
+
+    def _job_folders(self) -> dict:
+        s = self._settings
+        return {"acapella_dir": Path(s["acapella_dir"]) if s.get("acapella_dir") else None,
+                "instrumental_dir": Path(s["instrumental_dir"]) if s.get("instrumental_dir") else None}
 
     def browse_files(self) -> list[str]:
         patterns = ";".join(f"*.{e}" for e in AUDIO_EXTENSIONS)
@@ -2634,7 +2670,8 @@ class Api:
             return {"ok": False, "error": "That isn't a YouTube link or an audio file that exists."}
         s = self._settings
         job = Job(sources=sources, model_file=s["model"], output_format=s["format"],
-                  output_dir=Path(s["output_dir"]), faster=s["quality"] == "Faster", analyse=s["analyse"])
+                  output_dir=Path(s["output_dir"]), faster=s["quality"] == "Faster", analyse=s["analyse"],
+                  **self._job_folders())
         self._cancel.clear()
         if self._idle_timer:
             self._idle_timer.cancel()
@@ -2701,7 +2738,7 @@ class Api:
             if not p.exists():
                 continue
             peaks, duration = waveform(p)
-            stems.append({"kind": STEM_KINDS.get(p.parent.name, "Stem"), "path": str(p), "name": p.name,
+            stems.append({"kind": stem_kind(p), "path": str(p), "name": p.name,
                           "size": human_size(p), "url": self._server.audio_url(p),
                           "peaks": peaks, "duration": duration})
         if not stems:
@@ -2710,7 +2747,7 @@ class Api:
         length = max(st["duration"] for st in stems)
         meta = " · ".join(filter(None, [
             f"{int(length) // 60}:{int(length) % 60:02d}" if length else "",
-            entry.get("model"), entry.get("format"), "saved to " + _short_folder(Path(stems[0]["path"]).parent.parent)]))
+            entry.get("model"), entry.get("format"), "saved to " + _saved_to([Path(st["path"]) for st in stems])]))
         return {"title": entry["title"], "meta": meta, "stems": stems, "analysis": entry.get("analysis")}
 
     # History -----------------------------------------------------------------------
@@ -2734,6 +2771,14 @@ class Api:
             if e.get("id") == entry_id:
                 return self._song_view(e)
         return None
+
+
+def _saved_to(paths: list[Path]) -> str:
+    """Music\\ORemove for the standard layout; otherwise each stem's folder."""
+    parents = [p.parent for p in paths]
+    if all(p.name in STEM_KINDS for p in parents) and len({p.parent for p in parents}) == 1:
+        return _short_folder(parents[0].parent)
+    return " and ".join(dict.fromkeys(_short_folder(p) for p in parents))
 
 
 def _short_folder(folder: Path) -> str:
@@ -2991,8 +3036,8 @@ def self_test(report_path: Path, model_files: list[str] | None) -> int:
                 saved = songs[0]["stems"]
                 for path in saved:
                     log(f"saved: {path.relative_to(job.output_dir)}")
-                kinds = sorted(p.parent.name for p in saved)
-                if kinds != ["acapellas", "instrumentals"]:
+                kinds = sorted(stem_kind(p) for p in saved)
+                if kinds != ["Acapella", "Instrumental"]:
                     raise PipelineError(f"{model_file}: expected an acapella and an instrumental, got {kinds}")
                 if reuse and any("Loading UVR model" in l for l in lines[first_line:]):
                     raise PipelineError(f"{model_file}: the loaded model was not reused")
