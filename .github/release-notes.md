@@ -9,7 +9,6 @@ A speed release: the same features, faster. The stems come out the same (the new
 - **No more pauses between chunks:** the GPU keeps working while the previous chunk's result is added up, instead of stopping to copy it back to the CPU.
 - **Faster CPU edition:** one thread per physical core, and faster handling of very small numbers. The speed test can now tune the CPU edition too.
 - **Models load about 40% faster** the first time after opening ORemove.
-- **Choose your own folders** for acapellas and instrumentals (**Settings → Output**), for example straight into your sample library. By default they still go into the acapellas and instrumentals folders inside Music/ORemove.
 - **More accurate BPM:** the tempo is now measured over the whole song, so a missed or extra beat no longer throws it off, and readings above 200 BPM are halved (with the full value shown as the alternative).
 
 <details>

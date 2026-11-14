@@ -65,7 +65,7 @@ Roformer models download once, on first use. **Quality: Faster** roughly halves 
 | **Memory** | 16 GB | 8 GB minimum, 16 GB recommended | 8 GB minimum, 16 GB recommended |
 | **Disk** | ~6 GB + up to 3 GB of models | ~2 GB + up to 3 GB of models | ~2 GB + up to 3 GB of models |
 
-Stems are saved to **Music/ORemove**, or to your own folders for acapellas and instrumentals (**Settings → Output**). ORemove tells you when a new version is out. Having trouble installing? See [installation problems](INSTALL.md#9-installation-problems).
+Stems are saved to **Music/ORemove**, and ORemove tells you when a new version is out. Having trouble installing? See [installation problems](INSTALL.md#9-installation-problems).
 
 ## YouTube links
 

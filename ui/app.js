@@ -78,14 +78,6 @@ function renderSettings() {
   setSeg('formatSeg', s.format, v => saveSettings({ format: v }));
   $('outDir').textContent = s.output_dir;
   $('outDir').title = s.output_dir;
-  // Acapellas and instrumentals: their own folders, or (by default) a subfolder of the one above.
-  for (const [id, key, sub] of [['aca', 'acapella_dir', 'acapellas'], ['inst', 'instrumental_dir', 'instrumentals']]) {
-    const custom = s[key];
-    const sep = s.output_dir.includes('\\') ? '\\' : '/';
-    $(id + 'Dir').textContent = custom || `${s.output_dir}${sep}${sub}`;
-    $(id + 'Dir').title = custom || `${s.output_dir}${sep}${sub} (default)`;
-    $(id + 'Reset').classList.toggle('hidden', !custom);
-  }
   $('analyseSwitch').classList.toggle('on', s.analyse !== false);
   $('analyseSwitch').setAttribute('aria-checked', String(s.analyse !== false));
   const sw = $('ytdlpSwitch');
@@ -145,14 +137,6 @@ $('changeDir').onclick = async () => {
   const dir = await api.choose_folder();
   if (dir) saveSettings({ output_dir: dir });
 };
-for (const [id, key, kind] of [['aca', 'acapella_dir', 'acapella'], ['inst', 'instrumental_dir', 'instrumental']]) {
-  $(id + 'Change').onclick = async () => {
-    if (running) return;
-    const dir = await api.choose_folder(kind);
-    if (dir) saveSettings({ [key]: dir });
-  };
-  $(id + 'Reset').onclick = () => saveSettings({ [key]: '' });
-}
 $('openOut').onclick = () => api.open_output();
 $('ytdlpCheck').onclick = () => api.check_ytdlp();
 $('ytdlpSwitch').onclick = () => saveSettings({ ytdlp_auto: !state.settings.ytdlp_auto });

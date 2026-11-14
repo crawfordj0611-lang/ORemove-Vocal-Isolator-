@@ -174,14 +174,6 @@ class Job:
     output_dir: Path
     faster: bool = False  # fewer overlapping passes: about 2x faster, slightly lower quality
     analyse: bool = True  # detect BPM and key after separating
-    acapella_dir: Path | None = None      # None: <output_dir>/acapellas
-    instrumental_dir: Path | None = None  # None: <output_dir>/instrumentals
-
-    def folder_for(self, kind: str) -> Path:
-        """Where acapellas ("Acapella") or instrumentals ("Instrumental") are saved."""
-        if kind == "Acapella":
-            return self.acapella_dir or self.output_dir / "acapellas"
-        return self.instrumental_dir or self.output_dir / "instrumentals"
 
 
 YOUTUBE_URL_RE = re.compile(
@@ -1644,20 +1636,15 @@ class ExtractionPipeline:
 
     @staticmethod
     def stem_target(stem_name: str, base_name: str, suffix: str, job: Job) -> Path:
-        """
-        <acapella folder>/<song> (Acapella).wav, <instrumental folder>/<song>
-        (Instrumental).wav, or <output folder>/<song> (<stem>).wav. The acapella
-        and instrumental folders are acapellas/ and instrumentals/ inside the
-        output folder, unless the user chose their own.
-        """
+        """acapellas/<song> (Acapella).wav, instrumentals/<song> (Instrumental).wav, or <song> (<stem>).wav."""
         label = stem_name.lower().replace("_", " ")
         # Check instrumental first: "no vocals" also contains "vocals".
         # Roformer models call the instrumental stem "other".
         if label in ("instrumental", "other", "no vocals") or "no vocals" in label:
-            folder = job.folder_for("Instrumental")
+            folder = job.output_dir / "instrumentals"
             target = folder / f"{base_name} (Instrumental){suffix}"
         elif label == "vocals":
-            folder = job.folder_for("Acapella")
+            folder = job.output_dir / "acapellas"
             target = folder / f"{base_name} (Acapella){suffix}"
         else:
             folder = job.output_dir
@@ -2186,9 +2173,6 @@ class Api:
             "output_dir": settings.get("output_dir") or str(DEFAULT_OUTPUT_DIR),
             "ytdlp_auto": settings.get("ytdlp_auto") is not False,
             "analyse": settings.get("analyse") is not False,
-            # "" = the default (acapellas/ and instrumentals/ in the output folder)
-            "acapella_dir": settings.get("acapella_dir") or "",
-            "instrumental_dir": settings.get("instrumental_dir") or "",
         }
         _ytdlp["auto"] = self._settings["ytdlp_auto"]
         self._installing: str | None = None  # model being installed from the welcome card
@@ -2574,8 +2558,6 @@ class Api:
                 self._settings[key] = value
             elif key == "output_dir" and value:
                 self._settings[key] = str(value)
-            elif key in ("acapella_dir", "instrumental_dir") and isinstance(value, str):
-                self._settings[key] = value  # "" puts it back to the default
             elif key == "analyse" and isinstance(value, bool):
                 self._settings[key] = value
             elif key == "ytdlp_auto" and isinstance(value, bool):
@@ -2602,17 +2584,9 @@ class Api:
 
         threading.Thread(target=check, daemon=True).start()
 
-    def choose_folder(self, kind: str = "output"):
-        """A folder picker for the output folder, or the "acapella" or "instrumental" folder."""
-        current = self._settings.get(f"{kind}_dir") or self._settings["output_dir"]
-        start = current if Path(current).is_dir() else str(Path.home())
-        result = self._window.create_file_dialog(_dialog("FOLDER"), directory=start)
+    def choose_folder(self):
+        result = self._window.create_file_dialog(_dialog("FOLDER"), directory=self._settings["output_dir"])
         return result[0] if result else None
-
-    def _job_folders(self) -> dict:
-        s = self._settings
-        return {"acapella_dir": Path(s["acapella_dir"]) if s.get("acapella_dir") else None,
-                "instrumental_dir": Path(s["instrumental_dir"]) if s.get("instrumental_dir") else None}
 
     def browse_files(self) -> list[str]:
         patterns = ";".join(f"*.{e}" for e in AUDIO_EXTENSIONS)
@@ -2670,8 +2644,7 @@ class Api:
             return {"ok": False, "error": "That isn't a YouTube link or an audio file that exists."}
         s = self._settings
         job = Job(sources=sources, model_file=s["model"], output_format=s["format"],
-                  output_dir=Path(s["output_dir"]), faster=s["quality"] == "Faster", analyse=s["analyse"],
-                  **self._job_folders())
+                  output_dir=Path(s["output_dir"]), faster=s["quality"] == "Faster", analyse=s["analyse"])
         self._cancel.clear()
         if self._idle_timer:
             self._idle_timer.cancel()
